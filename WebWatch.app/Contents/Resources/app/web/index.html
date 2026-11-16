@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebWatch</title>
+<style>
+:root{
+  --bg:#f6f6f8;--side:#efeff3;--card:#fff;--tx:#1d1d1f;--mut:#6e6e76;--faint:#a1a1aa;--line:#e4e4e9;--line2:#ececf0;
+  --acc:#0a84ff;--acc-soft:rgba(10,132,255,.1);--ok:#28a745;--ok-soft:rgba(40,167,69,.12);--warn:#e8930c;--warn-soft:rgba(232,147,12,.14);
+  --err:#e5484d;--err-soft:rgba(229,72,77,.12);--chip:#f0f0f4;--shadow:0 1px 2px rgba(0,0,0,.04),0 2px 8px rgba(0,0,0,.04);
+  --shadow2:0 10px 40px rgba(0,0,0,.16);--r:12px;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#18181b;--side:#1f1f23;--card:#242428;--tx:#f2f2f5;--mut:#a0a0aa;--faint:#71717a;--line:#34343a;--line2:#2c2c31;
+  --acc:#3d9bff;--acc-soft:rgba(61,155,255,.16);--chip:#2e2e34;--shadow:none;--shadow2:0 10px 40px rgba(0,0,0,.5)}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--tx);font:13.5px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+button{font:inherit;color:inherit}
+svg{display:block}
+.app{display:grid;grid-template-columns:228px 1fr;height:100vh}
+/* --- barra lateral */
+aside{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px 14px;gap:2px;min-width:0}
+.brand{display:flex;gap:10px;align-items:center;padding:2px 8px 18px}
+.logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(145deg,#3aa0ff,#0a6cff);display:grid;place-items:center;box-shadow:0 2px 6px rgba(10,108,255,.35)}
+.brand b{font-size:15px;display:block;letter-spacing:-.01em}.brand small{color:var(--mut);font-size:11.5px}
+.nav{display:flex;align-items:center;gap:10px;padding:7px 10px;border-radius:8px;color:var(--tx);cursor:pointer;border:0;background:none;width:100%;text-align:left}
+.nav svg{width:17px;height:17px;color:var(--mut)}
+.nav:hover{background:rgba(127,127,140,.1)}
+.nav.on{background:var(--card);box-shadow:var(--shadow);font-weight:600}.nav.on svg{color:var(--acc)}
+.nav .n{margin-left:auto;font-size:11.5px;color:var(--mut);font-weight:500}
+.nav .n.hot{background:var(--err);color:#fff;border-radius:10px;padding:0 7px;font-weight:600}
+.grow{flex:1}
+.auto{border:1px solid var(--line);background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:12.5px;cursor:pointer}
+.auto .t{display:flex;align-items:center;gap:7px;font-weight:600}
+.auto .s{color:var(--mut);margin-top:2px}
+.pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.pulse.off{background:var(--faint);box-shadow:0 0 0 3px var(--chip)}
+/* --- botones */
+.btn{border:1px solid var(--line);background:var(--card);border-radius:8px;padding:7px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;line-height:1.2}
+.btn:hover{background:var(--chip)}
+.btn.p{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:600}
+.btn.p:hover{filter:brightness(1.07)}
+.btn.sm{padding:4px 10px;font-size:12.5px}
+.btn.ghost{border-color:transparent;background:none}.btn.ghost:hover{background:var(--chip)}
+.btn.wide{width:100%;justify-content:center;padding:9px}
+.btn.danger{color:var(--err)}
+.btn:disabled{opacity:.55;cursor:default}
+.btn svg{width:15px;height:15px}
+.spin{width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* --- contenido */
+main{overflow:auto;min-width:0}
+.wrap{max-width:1060px;margin:0 auto;padding:24px 32px 70px}
+.top{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.top h2{margin:0;font-size:21px;letter-spacing:-.02em}
+.search{position:relative;margin-left:auto}
+.search input[type=text]{width:220px;padding:7px 10px 7px 30px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--tx);font:inherit}
+.search svg{position:absolute;left:9px;top:8px;width:15px;height:15px;color:var(--faint)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 15px;box-shadow:var(--shadow)}
+.stat .k{color:var(--mut);font-size:12px}.stat .v{font-size:21px;font-weight:650;letter-spacing:-.02em;margin-top:2px}
+.stat .v small{font-size:12.5px;font-weight:500;color:var(--mut)}
+.banner{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:10px;margin-bottom:10px;background:var(--acc-soft);font-size:13px}
+.banner.warn{background:var(--warn-soft)}.banner.err{background:var(--err-soft)}
+.banner .btn{margin-left:auto}
+.list{display:flex;flex-direction:column;gap:10px}
+.w{display:grid;grid-template-columns:42px 1fr auto auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px 13px 16px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .15s,transform .15s}
+.w:hover{border-color:color-mix(in srgb,var(--acc) 40%,var(--line))}
+.w.off{opacity:.55}
+.av{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-weight:700;font-size:17px;color:#fff;position:relative}
+.av .st{position:absolute;right:-3px;bottom:-3px;width:13px;height:13px;border-radius:50%;border:2.5px solid var(--card);background:var(--faint)}
+.st.OK{background:var(--ok)}.st.ALERTA{background:var(--warn)}.st.ERROR{background:var(--err)}
+.w .main{min-width:0}
+.w .name{font-weight:600;font-size:14px;display:flex;gap:6px;align-items:center;min-width:0}
+.w .name span.tx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{background:var(--chip);border-radius:6px;padding:1px 7px;font-size:11px;color:var(--mut);font-weight:500;white-space:nowrap}
+.chip.warn{background:var(--warn-soft);color:var(--warn)}.chip.err{background:var(--err-soft);color:var(--err)}.chip.ok{background:var(--ok-soft);color:var(--ok)}
+.sub{color:var(--mut);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.right{display:flex;align-items:center;gap:14px}
+.price{text-align:right;min-width:92px}
+.price .big{font-size:17px;font-weight:650;letter-spacing:-.02em}
+.price .d{font-size:12px;font-weight:600}
+.down{color:var(--ok)}.up{color:var(--err)}
+.price .mini{font-size:11.5px;color:var(--mut)}
+.meta{text-align:right;font-size:12.5px;color:var(--mut);min-width:120px}
+.meta b{color:var(--tx);font-weight:600;display:block;font-size:13px}
+.empty{padding:56px 20px;text-align:center;color:var(--mut);background:var(--card);border:1px dashed var(--line);border-radius:var(--r)}
+.empty h3{color:var(--tx);margin:12px 0 4px;font-size:16px}
+/* --- tabla */
+.tbl{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:9px 14px;border-bottom:1px solid var(--line2);vertical-align:top}
+th{font-size:11.5px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.03em;background:var(--card);position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td.v{max-width:420px;word-break:break-word;white-space:pre-line}
+.tag{font-size:11px;font-weight:650;padding:2px 7px;border-radius:6px;white-space:nowrap}
+.tag.OK{background:var(--ok-soft);color:var(--ok)}.tag.ALERTA{background:var(--warn-soft);color:var(--warn)}.tag.ERROR{background:var(--err-soft);color:var(--err)}
+.filters{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+select,input[type=text],input[type=number],input[type=url],input[type=password],textarea{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+select{padding-right:26px}
+.seg{display:inline-flex;background:var(--chip);border-radius:8px;padding:2px}
+.seg button{border:0;background:none;padding:5px 12px;border-radius:6px;cursor:pointer;color:var(--mut);font-size:12.5px}
+.seg button.on{background:var(--card);color:var(--tx);font-weight:600;box-shadow:var(--shadow)}
+/* --- ajustes */
+.group{background:var(--card);border:1px solid var(--line);border-radius:var(--r);margin-bottom:18px;box-shadow:var(--shadow)}
+.gh{padding:14px 18px 2px}.gh h3{margin:0;font-size:14.5px}.gh p{margin:3px 0 0;color:var(--mut);font-size:12.5px}
+.set{display:flex;align-items:center;gap:14px;padding:12px 18px;border-top:1px solid var(--line2)}
+.gh+.set{border-top:0}
+.set .l{flex:1;min-width:0}.set .l b{font-weight:500;display:block}.set .l span{color:var(--mut);font-size:12.5px}
+.set input[type=text],.set input[type=password]{width:280px}
+.sw{position:relative;width:38px;height:22px;flex:none}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:var(--line);border-radius:22px;transition:.2s;cursor:pointer}
+.sw span:before{content:"";position:absolute;width:18px;height:18px;left:2px;top:2px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw input:checked+span{background:var(--ok)}
+.sw input:checked+span:before{transform:translateX(16px)}
+code{background:var(--chip);padding:1px 5px;border-radius:5px;font-size:12px}
+ol.steps{margin:6px 0 2px;padding-left:20px;color:var(--mut);font-size:12.5px}ol.steps li{margin:2px 0}
+/* --- diálogo */
+dialog{border:0;border-radius:16px;padding:0;width:min(620px,94vw);background:var(--card);color:var(--tx);box-shadow:var(--shadow2);max-height:92vh}
+dialog::backdrop{background:rgba(0,0,0,.35);backdrop-filter:blur(2px)}
+.dlg{padding:22px 24px 18px;overflow:auto;max-height:92vh}
+.dlg h3{margin:0 0 14px;font-size:17px}
+.fld{margin-bottom:13px}
+.fld>label{display:block;font-size:12.5px;font-weight:600;margin-bottom:5px}
+.fld input,.fld select,.fld textarea{width:100%}
+.hint{font-size:12px;color:var(--mut);margin-top:4px}
+.types{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.type{border:1.5px solid var(--line);border-radius:11px;padding:11px;cursor:pointer;display:block}
+.type input{display:none}
+.type .ic{font-size:20px}.type b{display:block;font-size:13px;margin:4px 0 2px}.type span{font-size:11.5px;color:var(--mut);line-height:1.35;display:block}
+.type:has(input:checked){border-color:var(--acc);background:var(--acc-soft)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.chk{display:flex;gap:8px;align-items:center;margin:7px 0;font-size:13px;cursor:pointer}
+.chk input{width:15px;height:15px;accent-color:var(--acc)}
+details.adv{border-top:1px solid var(--line2);padding-top:10px;margin-top:4px}
+details.adv summary{cursor:pointer;color:var(--mut);font-size:12.5px;font-weight:600;margin-bottom:8px}
+.store{display:none;align-items:center;gap:8px;padding:8px 11px;border-radius:9px;background:var(--ok-soft);font-size:12.5px;margin-top:6px}
+.store.on{display:flex}
+.preview{margin-top:12px;border-radius:11px;border:1px solid var(--line);padding:12px 14px;display:none;font-size:13px}
+.preview.on{display:block}.preview.bad{border-color:var(--err);background:var(--err-soft)}
+.preview .pt{font-weight:600}.preview .pp{font-size:20px;font-weight:650;margin:2px 0}
+.foot{display:flex;gap:8px;align-items:center;margin-top:16px}
+.dlg>.foot{position:sticky;bottom:-18px;background:var(--card);padding:12px 0 2px;margin-bottom:-2px}
+/* --- detalle */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.2s;z-index:10}
+.scrim.on{opacity:1;pointer-events:auto}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,96vw);background:var(--card);box-shadow:var(--shadow2);transform:translateX(102%);transition:transform .25s cubic-bezier(.2,.8,.2,1);z-index:11;display:flex;flex-direction:column}
+.drawer.on{transform:none}
+.dh{display:flex;gap:12px;align-items:center;padding:18px 20px;border-bottom:1px solid var(--line2)}
+.dh .main{flex:1;min-width:0}.dh h3{margin:0;font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db{padding:16px 20px;overflow:auto;flex:1}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:12px 0 16px}
+.kpi{background:var(--bg);border-radius:10px;padding:9px 11px}.kpi .k{font-size:11.5px;color:var(--mut)}.kpi .v{font-weight:650;font-size:15px}
+.acts{display:flex;gap:6px;flex-wrap:wrap}
+.chart{background:var(--bg);border-radius:12px;padding:10px 6px 4px}
+/* --- popover, toast, confirm */
+.pop{position:fixed;background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow2);padding:5px;z-index:30;min-width:210px;display:none}
+.pop.on{display:block}
+.pop button{display:flex;width:100%;border:0;background:none;text-align:left;padding:7px 10px;border-radius:6px;cursor:pointer;gap:8px;align-items:center}
+.pop button:hover{background:var(--acc);color:#fff}
+.pop hr{border:0;border-top:1px solid var(--line2);margin:4px 2px}
+#toast{position:fixed;bottom:22px;left:50%;transform:translate(-50%,10px);background:#1d1d1f;color:#fff;padding:10px 16px;border-radius:10px;opacity:0;transition:.25s;pointer-events:none;z-index:40;max-width:80vw;font-size:13px;box-shadow:var(--shadow2)}
+#toast.on{opacity:1;transform:translate(-50%,0)}#toast.err{background:var(--err)}
+.hide{display:none!important}
+kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--mut)}
+@media (max-width:820px){.app{grid-template-columns:62px 1fr}.brand div,.nav .lbl,.auto,.nav .n{display:none}.brand{padding:2px 4px 16px}.nav{justify-content:center}
+  .stats{grid-template-columns:1fr 1fr}.wrap{padding:18px}.search input[type=text]{width:150px}.w{grid-template-columns:42px 1fr auto}.w .spark{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside>
+  <div class="brand"><div class="logo"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3" fill="#fff"/></svg></div>
+    <div><b>WebWatch</b><small id="ver">sin IA · local</small></div></div>
+  <button class="nav on" data-tab="webs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 9h18"/></svg><span class="lbl">Webs</span><span class="n" id="nWebs"></span></button>
+  <button class="nav" data-tab="hist"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg><span class="lbl">Historial</span><span class="n" id="nUnseen"></span></button>
+  <button class="nav" data-tab="set"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="lbl">Ajustes</span></button>
+  <div class="grow"></div>
+  <div class="auto" id="autoBox" data-tab="set"><div class="t"><span class="pulse" id="pulse"></span><span id="autoT">Automático</span></div><div class="s" id="autoS"></div></div>
+  <button class="btn p wide" id="runAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg><span>Revisar ahora</span></button>
+</aside>
+
+<main>
+<div class="wrap">
+  <!-- WEBS -->
+  <section id="tab-webs">
+    <div class="top"><h2>Webs vigiladas</h2>
+      <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="q" type="text" placeholder="Buscar…  ( / )"></div>
+      <button class="btn p" id="add"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6"><path d="M12 5v14M5 12h14"/></svg>Añadir web</button></div>
+    <div class="stats">
+      <div class="stat"><div class="k">Webs activas</div><div class="v" id="sWebs">0</div></div>
+      <div class="stat"><div class="k">Alertas hoy</div><div class="v" id="sAlerts">0</div></div>
+      <div class="stat"><div class="k">Última revisión</div><div class="v" id="sLast">—</div></div>
+      <div class="stat"><div class="k">Próxima revisión</div><div class="v" id="sNext">—</div></div>
+    </div>
+    <div id="banners"></div>
+    <div class="list" id="list"></div>
+  </section>
+
+  <!-- HISTORIAL -->
+  <section id="tab-hist" class="hide">
+    <div class="top"><h2>Historial</h2><div class="grow"></div>
+      <button class="btn" data-open="csv">Abrir CSV</button><button class="btn" data-open="excel">Abrir Excel</button></div>
+    <div class="filters">
+      <div class="seg" id="hSeg"><button data-f="all" class="on">Todo</button><button data-f="ALERTA">Alertas</button><button data-f="ERROR">Errores</button></div>
+      <select id="hWeb"></select>
+      <div class="search" style="margin-left:0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="hq" type="text" placeholder="Buscar en el historial"></div>
+    </div>
+    <div class="tbl"><table><thead><tr><th style="width:150px">Fecha</th><th>Web</th><th style="width:80px">Estado</th><th>Qué vio</th></tr></thead><tbody id="hist"></tbody></table></div>
+  </section>
+
+  <!-- AJUSTES -->
+  <section id="tab-set" class="hide">
+    <div class="top"><h2>Ajustes</h2><div class="grow"></div><span class="sub" id="saved"></span></div>
+
+    <div class="group">
+      <div class="gh"><h3>Revisión automática</h3><p>Cada <span id="tickMin">10</span> minutos WebWatch mira qué webs tocan. Si el Mac estaba dormido o apagado, revisa las pendientes al despertar o encenderse.</p></div>
+      <div class="set"><div class="l"><b>Revisar automáticamente</b><span id="autoInfo"></span></div><label class="sw"><input type="checkbox" id="sAuto"><span></span></label></div>
+      <div class="set"><div class="l"><b>Frecuencia general</b><span>Cada web puede tener la suya propia al editarla</span></div>
+        <select id="sHours"><option value="0.5">Cada 30 min</option><option value="1">Cada hora</option><option value="2">Cada 2 horas</option><option value="4">Cada 4 horas</option><option value="6">Cada 6 horas</option><option value="12">Cada 12 horas</option><option value="24">Una vez al día</option></select></div>
+      <div class="set" id="loginRow"><div class="l"><b>Mostrar en la barra de menús al iniciar sesión</b><span>Icono 👁 arriba a la derecha con las últimas alertas</span></div><label class="sw"><input type="checkbox" id="sLogin"><span></span></label></div>
+    </div>
+
+    <div class="group">
+      <div class="gh"><h3>Avisos</h3><p>Cómo quieres enterarte cuando pase algo.</p></div>
+      <div class="set"><div class="l"><b>Notificaciones del Mac</b><span>Para que al pulsar abran la web: <code>brew install terminal-notifier</code></span></div>
+        <button class="btn sm" id="nTest">Probar</button><label class="sw"><input type="checkbox" id="sDesk"><span></span></label></div>
+      <div class="set"><div class="l"><b>Telegram</b><span>Recibe las alertas en el móvil</span></div>
+        <button class="btn sm" id="tgTest">Probar</button><label class="sw"><input type="checkbox" id="sTg"><span></span></label></div>
+      <div class="set" style="display:block">
+        <ol class="steps"><li>En Telegram abre <b>@BotFather</b>, escribe <code>/newbot</code> y copia el token que te da.</li><li>Pégalo abajo. Abre tu bot nuevo, pulsa <b>Iniciar</b> y escríbele «hola».</li><li>Pulsa <b>Detectar mi chat</b>.</li></ol>
+        <div class="row2" style="margin-top:10px"><input type="password" id="sTok" placeholder="Token del bot" autocomplete="off"><div style="display:flex;gap:8px"><input type="text" id="sChat" placeholder="Chat ID" style="flex:1;min-width:0"><button class="btn" id="tgDetect">Detectar mi chat</button></div></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="gh"><h3>Registro</h3><p>Cada observación se guarda en tu Mac.</p></div>
+      <div class="set"><div class="l"><b>CSV de observaciones</b><span id="csvPath"></span></div>
+        <select id="sDelim" title="Separador"><option value=";">; (Excel en español)</option><option value=",">, (internacional)</option></select>
+        <button class="btn sm" data-open="csv">Abrir</button><label class="sw"><input type="checkbox" id="sCsv"><span></span></label></div>
+      <div class="set"><div class="l"><b>Excel</b><span id="xlsPath"></span></div>
+        <button class="btn sm" data-open="excel">Abrir</button><label class="sw"><input type="checkbox" id="sXls"><span></span></label></div>
+      <div class="set"><div class="l"><b>Carpeta de datos</b><span id="dataDir"></span></div><button class="btn sm" data-open="log">Ver log</button><button class="btn sm" data-open="folder">Abrir carpeta</button></div>
+    </div>
+
+    <div class="group">
+      <div class="gh"><h3>Navegador del bot</h3><p>Para Amazon, AliExpress y webs que cargan con JavaScript. Usa tu Google Chrome con un perfil aparte (no toca el tuyo).</p></div>
+      <div class="set"><div class="l"><b id="pwState"></b><span>Si una tienda pide captcha o elegir país/cookies, ábrela aquí, resuélvelo una vez y cierra la ventana. Se recuerda.</span></div>
+        <button class="btn sm" data-bot="https://www.amazon.es">Amazon</button><button class="btn sm" data-bot="https://es.aliexpress.com">AliExpress</button></div>
+    </div>
+    <p class="sub" style="text-align:center" id="about"></p>
+  </section>
+</div>
+</main>
+</div>
+
+<!-- detalle -->
+<div class="scrim" id="scrim"></div>
+<div class="drawer" id="drawer"></div>
+
+<!-- diálogo añadir/editar -->
+<dialog id="dlg"><div class="dlg">
+  <h3 id="dTitle">Añadir web</h3>
+  <div class="fld"><label>Dirección de la página</label><input type="url" id="fUrl" placeholder="Pega aquí el enlace: https://…">
+    <div class="store" id="fStore">✅ <span></span></div></div>
+  <div class="fld"><label>¿Qué quieres vigilar?</label>
+    <div class="types">
+      <label class="type"><input type="radio" name="ftype" value="change"><div class="ic">🔄</div><b>Cambios</b><span>Avisa si cambia el texto. Ideal para el estado de una obra.</span></label>
+      <label class="type"><input type="radio" name="ftype" value="product"><div class="ic">🏷️</div><b>Precio</b><span>Amazon, AliExpress y casi cualquier tienda.</span></label>
+      <label class="type"><input type="radio" name="ftype" value="keyword"><div class="ic">🔎</div><b>Palabras</b><span>Cuando aparece o desaparece algo («agotado»).</span></label>
+    </div></div>
+  <div class="row2">
+    <div class="fld"><label>Nombre</label><input type="text" id="fName" placeholder="Se rellena al probar"></div>
+    <div class="fld"><label>Revisar</label><select id="fInt"><option value="">Frecuencia general</option><option value="0.5">Cada 30 min</option><option value="1">Cada hora</option><option value="2">Cada 2 horas</option><option value="4">Cada 4 horas</option><option value="6">Cada 6 horas</option><option value="12">Cada 12 horas</option><option value="24">Una vez al día</option></select></div>
+  </div>
+  <div id="g-product">
+    <div class="row2"><div class="fld"><label>Avisar si baja de</label><input type="number" step="0.01" min="0" id="fBelow" placeholder="Ej. 49,99"></div>
+      <div class="fld"><label>…o si baja un</label><input type="number" step="1" min="1" max="95" id="fDrop" placeholder="% respecto a la última vez"></div></div>
+    <label class="chk"><input type="checkbox" id="fMin"><span>Avisar si marca su <b>mínimo histórico</b></span></label>
+    <label class="chk"><input type="checkbox" id="fStock"><span>Avisar cuando <b>vuelva a haber stock</b></span></label>
+    <label class="chk"><input type="checkbox" id="fAny"> Avisar con cualquier cambio de precio</label>
+  </div>
+  <div id="g-keyword" class="row2">
+    <div class="fld"><label>Avisar cuando APAREZCA</label><input type="text" id="fApp" placeholder="disponible, rebajas"><div class="hint">Separadas por comas</div></div>
+    <div class="fld"><label>Avisar cuando DESAPAREZCA</label><input type="text" id="fDis" placeholder="agotado"></div>
+  </div>
+  <details class="adv" id="fAdv"><summary>Opciones avanzadas</summary>
+    <div class="fld"><label id="selLbl">Zona de la página (selector CSS)</label><input type="text" id="fSel" placeholder="Ej. #estado  o  .price">
+      <div class="hint">Vacío = automático / toda la página. Para sacarlo: Chrome → clic derecho en el elemento → Inspeccionar → clic derecho → Copy → Copy selector.</div></div>
+    <div class="fld" id="g-ignore"><label>Ignorar texto que cambia siempre (expresión regular por línea)</label><textarea id="fIgn" rows="2" placeholder="\d{2}:\d{2}"></textarea></div>
+    <div class="fld"><label>Cómo leer la página</label><select id="fRender"><option value="auto">Automático (recomendado)</option><option value="http">Rápido (descarga directa)</option><option value="browser">Navegador del bot (webs con JavaScript)</option></select></div>
+  </details>
+  <div class="preview" id="fPrev"></div>
+  <div class="foot"><button class="btn" id="fTest">Probar lectura</button><div class="grow"></div><button class="btn ghost" id="fCancel">Cancelar</button><button class="btn p" id="fSave">Guardar</button></div>
+</div></dialog>
+
+<dialog id="cfm" style="width:min(400px,92vw)"><div class="dlg"><h3 id="cfmT"></h3><div class="sub" id="cfmM" style="white-space:normal"></div>
+  <div class="foot"><div class="grow"></div><button class="btn ghost" id="cfmNo">Cancelar</button><button class="btn p" id="cfmOk">Aceptar</button></div></div></dialog>
+<div class="pop" id="pop"></div>
+<div id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let S=null, editing=null, tab='webs', hFilter='all', openId=null;
+
+async function api(path,body){
+  const opt=body===undefined?{}:{method:'POST',headers:{'X-WW':'1','Content-Type':'application/json'},body:JSON.stringify(body)};
+  const r=await fetch(path,opt); const j=await r.json().catch(()=>({}));
+  if(!r.ok){const e=new Error(j.error||('Error '+r.status));e.blocked=j.blocked;throw e} return j;
+}
+function toast(m,err){const t=$('#toast');t.textContent=m;t.className='on'+(err?' err':'');clearTimeout(t._t);t._t=setTimeout(()=>t.className='',err?6000:2800)}
+async function busy(btn,fn,ok){
+  const html=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span>'+(btn.dataset.busy||'');
+  try{const r=await fn();if(ok)toast(typeof ok==='function'?ok(r):ok);return r}catch(e){toast(e.message,true)}finally{btn.disabled=false;btn.innerHTML=html}}
+function ask(title,msg,ok='Aceptar'){return new Promise(res=>{$('#cfmT').textContent=title;$('#cfmM').textContent=msg;$('#cfmOk').textContent=ok;const d=$('#cfm');
+  $('#cfmOk').onclick=()=>{d.close();res(true)};$('#cfmNo').onclick=()=>{d.close();res(false)};d.onclose=()=>res(false);d.showModal()})}
+
+const T=t=>t?new Date(t.replace(' ','T')):null;
+function ago(t){if(!t)return'—';const d=(T(S.now)-T(t))/1000;if(d<60)return'ahora';if(d<3600)return Math.round(d/60)+' min';if(d<86400)return Math.round(d/3600)+' h';return Math.round(d/86400)+' d'}
+function hace(t){const a=ago(t);return a==='ahora'?'ahora mismo':'hace '+a}
+function until(t){if(!t)return'—';const d=(T(t)-T(S.now))/1000;if(d<=60)return'en breve';if(d<3600)return'en '+Math.round(d/60)+' min';if(d<86400)return'en '+Math.round(d/3600)+' h';return'en '+Math.round(d/86400)+' d'}
+function hhmm(t){return t?t.slice(11,16):''}
+function money(p,c){if(p==null)return'—';try{return new Intl.NumberFormat('es-ES',{style:'currency',currency:c||'EUR'}).format(p)}catch(e){return p.toFixed(2)+' '+(c||'')}}
+const TYPES={change:'Cambios',product:'Precio',keyword:'Palabras'};
+function storeOf(u){try{const h=new URL(u).hostname;if(/(^|\.)amazon\.|amzn\.(eu|to)$/.test(h))return'amazon';if(h.includes('aliexpress.'))return'aliexpress'}catch(e){}return null}
+function host(u){try{return new URL(u).hostname.replace(/^www\./,'')}catch(e){return u}}
+function avatar(w){
+  if(w.store==='amazon')return{bg:'#232f3e',tx:'a',c:'#ff9900'};
+  if(w.store==='aliexpress')return{bg:'linear-gradient(145deg,#ff4747,#e62e04)',tx:'A',c:'#fff'};
+  const h=[...host(w.url)].reduce((a,c)=>a*31+c.charCodeAt(0)>>>0,7)%360;
+  return{bg:`linear-gradient(145deg,hsl(${h} 70% 58%),hsl(${(h+30)%360} 70% 46%))`,tx:host(w.url)[0].toUpperCase(),c:'#fff'}}
+function avHtml(w,size=42){const a=avatar(w),off=w.enabled===false;const st=off?'':(w.last?w.last.status:'');
+  return `<div class="av" style="background:${a.bg};color:${a.c};width:${size}px;height:${size}px">${esc(a.tx)}<span class="st ${st}"></span></div>`}
+function spark(pr,W=104,H=34){if(!pr||pr.length<2)return'<div class="spark" style="width:104px"></div>';const v=pr.map(p=>p[1]),mn=Math.min(...v),mx=Math.max(...v),r=mx-mn||1;
+  const pts=v.map((y,i)=>[(i/(v.length-1))*(W-4)+2,H-3-((y-mn)/r)*(H-6)]);const last=pts[pts.length-1];
+  const col=v[v.length-1]<v[0]?'var(--ok)':v[v.length-1]>v[0]?'var(--err)':'var(--acc)';
+  return `<svg class="spark" width="${W}" height="${H}"><polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.6" fill="${col}"/></svg>`}
+
+async function load(){
+  S=await api('/api/state');render();
+  if(S.unseen&&!document.hidden&&(tab==='hist'||tab==='webs')){api('/api/seen',{}).catch(()=>{})}
+}
+function render(){renderSide();renderWebs();renderHist();renderSettings();if(openId)renderDrawer()}
+
+function renderSide(){
+  const c=S.config,active=S.watches.filter(w=>w.enabled!==false);
+  $('#nWebs').textContent=active.length||'';
+  const u=$('#nUnseen');u.textContent=S.unseen||'';u.className='n'+(S.unseen?' hot':'');
+  const on=!c.paused&&(!S.schedule.supported||S.schedule.installed);
+  $('#pulse').className='pulse'+(on?'':' off');
+  $('#autoT').textContent=on?`Automático · ${fmtH(c.interval_hours)}`:'Automático en pausa';
+  $('#autoS').textContent=on?(S.next_run?'Próxima revisión '+until(S.next_run):'Nada pendiente'):'Pulsa para activarlo';
+  $('#ver').textContent='v'+S.version+' · sin IA · local';
+}
+function fmtH(h){h=+h;return h<1?`cada ${h*60} min`:h===1?'cada hora':h===24?'cada día':`cada ${h} h`}
+
+function renderWebs(){
+  const q=$('#q').value.trim().toLowerCase(),ws=S.watches.filter(w=>!q||(w.name+' '+w.url+' '+(w.title||'')).toLowerCase().includes(q));
+  const active=S.watches.filter(w=>w.enabled!==false);
+  $('#sWebs').innerHTML=`${active.length}<small> de ${S.watches.length}</small>`;
+  $('#sAlerts').textContent=S.alerts_today;
+  $('#sLast').innerHTML=S.last_run?(x=>x[0].toUpperCase()+x.slice(1))(hace(S.last_run)):'—';
+  $('#sNext').textContent=S.config.paused?'En pausa':(S.next_run?until(S.next_run).replace(/^en /,'En '):'—');
+  let b='';
+  if(S.schedule.supported&&!S.schedule.installed)b+=`<div class="banner warn">⏸ La revisión automática no está instalada.<button class="btn sm" data-auto-on>Activar</button></div>`;
+  else if(S.config.paused)b+=`<div class="banner warn">⏸ La revisión automática está en pausa.<button class="btn sm" data-auto-on>Reanudar</button></div>`;
+  S.watches.filter(w=>w.blocked&&w.enabled!==false).forEach(w=>b+=`<div class="banner err">🧩 <b>${esc(w.name)}</b>: la tienda pide captcha.<button class="btn sm" data-bot="${esc(w.url)}">Resolver</button></div>`);
+  if(!S.config.telegram.enabled&&S.watches.length)b+=`<div class="banner">💬 ¿Quieres las alertas en el móvil? Conecta Telegram en 1 minuto.<button class="btn sm" data-go="set">Configurar</button></div>`;
+  $('#banners').innerHTML=b;
+  const L=$('#list');
+  if(!S.watches.length){L.innerHTML=`<div class="empty"><div style="font-size:34px">👀</div><h3>Aún no vigilas ninguna web</h3><p>Pega el enlace del estado de tu obra, un producto de Amazon o AliExpress…</p><button class="btn p" data-add>Añadir la primera</button></div>`;return}
+  if(!ws.length){L.innerHTML='<div class="empty">Nada coincide con la búsqueda</div>';return}
+  L.innerHTML=ws.map(w=>{const l=w.last||{},off=w.enabled===false;let chips=`<span class="chip">${TYPES[w.type]||w.type}</span>`;
+    if(off)chips+='<span class="chip">pausada</span>';else if(l.status==='ERROR')chips+='<span class="chip err">error</span>';
+    if(w.type==='product'&&w.available===false)chips+='<span class="chip warn">sin stock</span>';
+    let right;
+    if(w.type==='product'){const p=w.prices.length?w.prices[w.prices.length-1][1]:null,prev=w.prices.length>1?w.prices[w.prices.length-2][1]:null;
+      let d='';if(p!=null&&prev!=null&&p!==prev){const pc=(p-prev)/prev*100;d=`<div class="d ${pc<0?'down':'up'}">${pc<0?'▼':'▲'} ${Math.abs(pc).toFixed(pc>-1&&pc<1?1:0)}%</div>`}
+      right=`${spark(w.prices)}<div class="price"><div class="big">${money(p,w.currency)}</div>${d||`<div class="mini">${w.min!=null?'mín. '+money(w.min,w.currency):'&nbsp;'}</div>`}</div>`}
+    else right=`<div class="meta"><b>${w.last_change?'Cambió '+hace(w.last_change):'Sin cambios'}</b>${w.last_change?hhmm(w.last_change)+' · '+w.last_change.slice(8,10)+'/'+w.last_change.slice(5,7):'desde que la vigilas'}</div>`;
+    const sub=l.t?(l.status==='ERROR'?`⚠️ ${esc(l.note)}`:`Revisada ${hace(l.t)} · próxima ${until(w.next)}`):'Pendiente de la primera revisión';
+    return `<div class="w ${off?'off':''}" data-open-w="${w.id}">${avHtml(w)}<div class="main"><div class="name"><span class="tx">${esc(w.name)}</span>${chips}</div>
+      <div class="sub">${esc(host(w.url))}${w.title&&w.type==='product'?' · '+esc(w.title):''}</div><div class="sub">${sub}</div></div>
+      <div class="right">${right}</div><button class="btn ghost sm" data-menu="${w.id}" title="Más">•••</button></div>`}).join('');
+}
+
+function renderHist(){
+  const sel=$('#hWeb'),cur=sel.value;
+  sel.innerHTML='<option value="">Todas las webs</option>'+S.watches.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('');sel.value=cur;
+  const q=$('#hq').value.trim().toLowerCase();
+  const H=S.history.filter(h=>(hFilter==='all'||h.status===hFilter)&&(!sel.value||h.id===sel.value)&&(!q||(h.name+' '+(h.detail||'')+' '+(h.note||'')+' '+(h.value||'')).toLowerCase().includes(q)));
+  $('#hist').innerHTML=H.length?H.slice(0,300).map(h=>`<tr><td style="white-space:nowrap" class="sub">${esc(h.t)}</td><td>${esc(h.name)}</td><td><span class="tag ${h.status}">${h.status==='ALERTA'?'Alerta':h.status==='ERROR'?'Error':'OK'}</span></td>
+    <td class="v">${h.status==='ALERTA'?'<b>'+esc(h.detail)+'</b>':esc(h.note)}${h.value?`<div class="sub" style="white-space:normal">${esc(String(h.value).slice(0,160))}</div>`:''}</td></tr>`).join(''):'<tr><td colspan="4"><div class="empty" style="border:0">Nada que mostrar todavía</div></td></tr>';
+}
+
+let filled=false;
+function renderSettings(force){
+  const c=S.config,sc=S.schedule;
+  $('#tickMin').textContent=S.tick_minutes;
+  $('#autoInfo').textContent=!sc.supported?'Solo en macOS por ahora; en Linux usa «Revisar ahora»':(!sc.installed?'No instalada: actívala aquí':(c.paused?'En pausa':'Activa'));
+  $('#loginRow').classList.toggle('hide',!sc.supported||!sc.app);
+  $('#csvPath').textContent=c.csv_full_path;$('#xlsPath').textContent=c.excel_full_path;$('#dataDir').textContent=S.data_dir;
+  $('#pwState').textContent=S.playwright?'✅ Listo':'⚠️ No instalado (cierra y vuelve a abrir WebWatch)';
+  $('#about').textContent=`WebWatch ${S.version} · Funciona sin IA, todo en tu Mac`;
+  if(filled&&!force)return;filled=true;
+  $('#sAuto').checked=!c.paused&&(!sc.supported||sc.installed);$('#sHours').value=String(c.interval_hours);if(!$('#sHours').value)$('#sHours').value='4';
+  $('#sLogin').checked=sc.login_item;$('#sDesk').checked=c.notify_desktop!==false;$('#sTg').checked=c.telegram.enabled;
+  $('#sTok').value=c.telegram.token;$('#sChat').value=c.telegram.chat_id;$('#sCsv').checked=c.csv.enabled!==false;$('#sXls').checked=c.excel.enabled!==false;$('#sDelim').value=c.csv.delimiter||';';
+}
+function collect(){return{interval_hours:$('#sHours').value,notify_desktop:$('#sDesk').checked,
+  telegram:{enabled:$('#sTg').checked,token:$('#sTok').value,chat_id:$('#sChat').value},
+  csv:{enabled:$('#sCsv').checked,delimiter:$('#sDelim').value},excel:{enabled:$('#sXls').checked}}}
+async function saveSettings(silent){try{await api('/api/settings',collect());$('#saved').textContent='✓ Guardado';setTimeout(()=>$('#saved').textContent='',1600);S=await api('/api/state');render()}catch(e){toast(e.message,true)}}
+['#sHours','#sDesk','#sTg','#sTok','#sChat','#sCsv','#sXls','#sDelim'].forEach(s=>$(s).addEventListener('change',()=>saveSettings()));
+$('#sAuto').onchange=async e=>{try{await api('/api/auto',{on:e.target.checked});toast(e.target.checked?'Revisión automática activada':'Revisión automática en pausa');load()}catch(x){toast(x.message,true);e.target.checked=!e.target.checked}};
+$('#sLogin').onchange=async e=>{try{await api('/api/login-item',{on:e.target.checked});toast(e.target.checked?'Se abrirá en la barra de menús al iniciar sesión':'Ya no se abrirá al iniciar sesión')}catch(x){toast(x.message,true);e.target.checked=!e.target.checked}};
+$('#nTest').onclick=e=>busy(e.currentTarget,()=>api('/api/notify/test',{}),'Enviada. Si no aparece: Ajustes del Sistema → Notificaciones');
+$('#tgDetect').onclick=e=>busy(e.currentTarget,async()=>{await saveSettings(true);const r=await api('/api/telegram/detect',{});filled=false;await load();return r},r=>'Conectado con '+r.name);
+$('#tgTest').onclick=e=>busy(e.currentTarget,async()=>{await saveSettings(true);await api('/api/telegram/test',{})},'Mensaje enviado: mira Telegram');
+
+/* ---- navegación */
+function gotoTab(t){tab=t;$$('.nav').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));['webs','hist','set'].forEach(x=>$('#tab-'+x).classList.toggle('hide',x!==t));
+  if(t==='set'){filled=false;renderSettings()}if(t==='hist'&&S&&S.unseen)api('/api/seen',{}).then(load)}
+$$('.nav').forEach(b=>b.onclick=()=>gotoTab(b.dataset.tab));
+$('#autoBox').onclick=()=>gotoTab('set');
+$('#q').oninput=renderWebs;$('#hq').oninput=renderHist;$('#hWeb').onchange=renderHist;
+$$('#hSeg button').forEach(b=>b.onclick=()=>{hFilter=b.dataset.f;$$('#hSeg button').forEach(x=>x.classList.toggle('on',x===b));renderHist()});
+
+/* ---- acciones */
+async function runAll(){const b=$('#runAll');b.dataset.busy=' Revisando…';await busy(b,()=>api('/api/run',{}),r=>{const a=r.results.filter(x=>x.status==='ALERTA').length,er=r.results.filter(x=>x.status==='ERROR').length;
+  return `${r.results.length} revisadas · ${a} ${a===1?'alerta':'alertas'}${er?' · '+er+' con error':''}`});load()}
+$('#runAll').onclick=runAll;
+async function runOne(id,btn){const f=()=>api('/api/run',{id});const msg=r=>{const x=r.results[0];return x?(x.status==='ALERTA'?'🔔 '+x.detail:x.status==='ERROR'?'⚠️ '+x.note:'✓ '+x.note+(x.value&&x.type==='product'?' · '+x.value:'')):'Hecho'};
+  if(btn)await busy(btn,f,msg);else{toast('Revisando…');try{toast(msg(await f()))}catch(e){toast(e.message,true)}}load()}
+async function act(a,id,btn){const w=S.watches.find(x=>x.id===id);closePop();
+  if(a==='run')return runOne(id,btn);
+  if(a==='edit')return openDlg(id);
+  if(a==='web')return api('/api/open',{what:'url',url:w.url}).catch(e=>toast(e.message,true));
+  if(a==='bot'){await api('/api/browser',{url:w.url}).catch(e=>toast(e.message,true));return toast('Abriendo el navegador del bot… ciérralo al terminar')}
+  if(a==='toggle'){await api('/api/watch/toggle',{id});return load()}
+  if(a==='reset'){if(!await ask('¿Empezar de cero?',`La próxima lectura de «${w.name}» será la nueva referencia (no avisará). El historial se conserva.`,'Reiniciar'))return;await api('/api/watch/reset',{id});toast('Referencia reiniciada');return load()}
+  if(a==='del'){if(!await ask('¿Borrar esta web?',`Dejarás de vigilar «${w.name}». Lo ya registrado en el CSV y el Excel se conserva.`,'Borrar'))return;await api('/api/watch/delete',{id});closeDrawer();toast('Borrada');return load()}}
+function menuHtml(w){const off=w.enabled===false;return `<button data-act="run">↻ Revisar ahora</button><button data-act="edit">✎ Editar…</button><button data-act="web">↗ Abrir la web</button>
+  ${w.store||w.render==='browser'?'<button data-act="bot">🧩 Abrir en el navegador del bot</button>':''}<hr><button data-act="toggle">${off?'▶ Reanudar':'⏸ Pausar'}</button><button data-act="reset">⟲ Reiniciar referencia</button><hr><button data-act="del" style="color:var(--err)">🗑 Borrar</button>`}
+function openPop(id,anchor){const p=$('#pop'),w=S.watches.find(x=>x.id===id);p.innerHTML=menuHtml(w);p.dataset.id=id;p.classList.add('on');
+  const r=anchor.getBoundingClientRect();p.style.top=Math.min(r.bottom+4,innerHeight-p.offsetHeight-8)+'px';p.style.left=Math.max(8,r.right-p.offsetWidth)+'px'}
+function closePop(){$('#pop').classList.remove('on')}
+$('#pop').onclick=e=>{const b=e.target.closest('[data-act]');if(b)act(b.dataset.act,$('#pop').dataset.id)};
+
+document.addEventListener('click',e=>{
+  const t=e.target;
+  if(!t.closest('#pop')&&!t.closest('[data-menu]'))closePop();
+  let el;
+  if(el=t.closest('[data-menu]')){e.stopPropagation();return openPop(el.dataset.menu,el)}
+  if(el=t.closest('[data-d-act]'))return act(el.dataset.dAct,openId,el);
+  if(el=t.closest('[data-open-w]'))return openDrawer(el.dataset.openW);
+  if(el=t.closest('[data-open]'))return api('/api/open',{what:el.dataset.open}).catch(x=>toast(x.message,true));
+  if(el=t.closest('[data-bot]')){api('/api/browser',{url:el.dataset.bot}).then(()=>toast('Abriendo el navegador del bot… ciérralo al terminar')).catch(x=>toast(x.message,true));return}
+  if(el=t.closest('[data-go]'))return gotoTab(el.dataset.go);
+  if(t.closest('[data-add]'))return openDlg();
+  if(t.closest('[data-auto-on]'))return api('/api/auto',{on:true}).then(()=>{toast('Revisión automática activada');filled=false;load()}).catch(x=>toast(x.message,true));
+});
+
+/* ---- detalle */
+function bigChart(pr,cur){if(!pr||pr.length<2)return'<div class="sub" style="padding:30px;text-align:center">El gráfico aparece a partir de la segunda lectura</div>';
+  const W=500,H=170,P={l:8,r:8,t:16,b:22},v=pr.map(p=>p[1]),mn=Math.min(...v),mx=Math.max(...v),r=mx-mn||1;
+  const X=i=>P.l+(i/(v.length-1))*(W-P.l-P.r),Y=y=>P.t+(1-(y-mn)/r)*(H-P.t-P.b);
+  const line=v.map((y,i)=>`${X(i)},${Y(y)}`).join(' ');
+  const iMin=v.indexOf(mn);
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--acc)" stop-opacity=".22"/><stop offset="1" stop-color="var(--acc)" stop-opacity="0"/></linearGradient></defs>
+  <polygon points="${X(0)},${H-P.b} ${line} ${X(v.length-1)},${H-P.b}" fill="url(#g)"/><polyline points="${line}" fill="none" stroke="var(--acc)" stroke-width="2" stroke-linejoin="round"/>
+  ${v.map((y,i)=>`<circle cx="${X(i)}" cy="${Y(y)}" r="${i===iMin?4:2.2}" fill="${i===iMin?'var(--ok)':'var(--acc)'}"><title>${pr[i][0]} · ${money(y,cur)}</title></circle>`).join('')}
+  <text x="${X(iMin)}" y="${Y(mn)>H/2?Y(mn)-9:Y(mn)+15}" font-size="10.5" fill="var(--ok)" text-anchor="${iMin>v.length*0.8?'end':iMin<v.length*0.2?'start':'middle'}">mín ${money(mn,cur)}</text>
+  <text x="${P.l}" y="${H-5}" font-size="10.5" fill="var(--mut)">${pr[0][0].slice(0,10)}</text><text x="${W-P.r}" y="${H-5}" font-size="10.5" fill="var(--mut)" text-anchor="end">${pr[pr.length-1][0].slice(0,10)}</text></svg>`}
+function openDrawer(id){openId=id;renderDrawer();$('#drawer').classList.add('on');$('#scrim').classList.add('on')}
+function closeDrawer(){openId=null;$('#drawer').classList.remove('on');$('#scrim').classList.remove('on')}
+$('#scrim').onclick=closeDrawer;
+function renderDrawer(){const w=S.watches.find(x=>x.id===openId);if(!w)return closeDrawer();const l=w.last||{};
+  const hs=S.history.filter(h=>h.id===w.id).slice(0,40);
+  let body='';
+  if(w.type==='product'){const p=w.prices.length?w.prices[w.prices.length-1][1]:null;
+    body+=`<div class="kpis"><div class="kpi"><div class="k">Actual</div><div class="v">${money(p,w.currency)}</div></div><div class="kpi"><div class="k">Mínimo</div><div class="v down">${money(w.min,w.currency)}</div></div>
+    <div class="kpi"><div class="k">Máximo</div><div class="v">${money(w.max,w.currency)}</div></div><div class="kpi"><div class="k">Stock</div><div class="v">${w.available===true?'Sí':w.available===false?'No':'—'}</div></div></div>
+    <div class="chart">${bigChart(w.prices,w.currency)}</div>`;
+    const rules=[w.below!=null&&`baja de ${money(w.below,w.currency)}`,w.drop_percent&&`baja un ${w.drop_percent}%`,w.notify_min&&'mínimo histórico',w.notify_stock!==false&&'vuelve el stock',w.any_change&&'cualquier cambio'].filter(Boolean);
+    body+=`<p class="sub" style="white-space:normal;margin:12px 0">🔔 Te aviso si: ${rules.join(' · ')||'no hay reglas (edítala)'}</p>`}
+  else body+=`<div class="kpis"><div class="kpi"><div class="k">Revisiones</div><div class="v">${w.checks}</div></div><div class="kpi"><div class="k">Último cambio</div><div class="v">${w.last_change?ago(w.last_change):'—'}</div></div>
+    <div class="kpi"><div class="k">Última</div><div class="v">${l.t?ago(l.t):'—'}</div></div><div class="kpi"><div class="k">Próxima</div><div class="v">${until(w.next).replace('en ','')}</div></div></div>
+    ${l.value?`<div class="kpi" style="margin-bottom:14px"><div class="k">Lo último que leyó</div><div style="font-size:12.5px;margin-top:3px">${esc(l.value)}</div></div>`:''}`;
+  body+=`<h4 style="margin:6px 0 8px;font-size:13px">Últimas observaciones</h4><div class="tbl"><table><tbody>${hs.length?hs.map(h=>`<tr><td class="sub" style="white-space:nowrap">${esc(h.t.slice(5,16))}</td><td><span class="tag ${h.status}">${h.status==='ALERTA'?'Alerta':h.status==='ERROR'?'Error':'OK'}</span></td><td class="v">${esc(h.status==='ALERTA'?h.detail:(h.type==='product'&&h.value?h.value+' · ':'')+h.note)}</td></tr>`).join(''):'<tr><td class="sub">Sin revisiones todavía</td></tr>'}</tbody></table></div>`;
+  $('#drawer').innerHTML=`<div class="dh">${avHtml(w,46)}<div class="main"><h3>${esc(w.name)}</h3><div class="sub">${esc(w.title&&w.title!==w.name?w.title:w.url)}</div></div><button class="btn ghost" onclick="closeDrawer()" title="Cerrar (Esc)">✕</button></div>
+  <div class="db"><div class="acts"><button class="btn p sm" data-d-act="run">↻ Revisar</button><button class="btn sm" data-d-act="edit">✎ Editar</button><button class="btn sm" data-d-act="web">↗ Abrir web</button>
+  ${w.store?'<button class="btn sm" data-d-act="bot">🧩 Navegador del bot</button>':''}<button class="btn sm" data-d-act="toggle">${w.enabled===false?'▶ Reanudar':'⏸ Pausar'}</button><button class="btn sm danger" data-d-act="del">Borrar</button></div>${body}</div>`}
+
+/* ---- diálogo */
+const ftype=()=>($('input[name=ftype]:checked')||{}).value||'change';
+function syncDlg(){const t=ftype(),st=storeOf($('#fUrl').value);
+  $('#g-product').classList.toggle('hide',t!=='product');$('#g-keyword').classList.toggle('hide',t!=='keyword');$('#g-ignore').classList.toggle('hide',t!=='change');
+  $('#selLbl').textContent=t==='product'?'Selector CSS del precio (solo si no lo encuentra solo)':'Zona de la página (selector CSS)';
+  const s=$('#fStore');s.classList.toggle('on',!!st);if(st)s.querySelector('span').textContent=`${st==='amazon'?'Amazon':'AliExpress'} detectado: encuentro el precio, el título y el stock automáticamente.`}
+$$('input[name=ftype]').forEach(r=>r.onchange=syncDlg);
+$('#fUrl').addEventListener('input',()=>{if(storeOf($('#fUrl').value)){const r=$('input[name=ftype][value=product]');if(!r.checked){r.checked=true}}syncDlg()});
+function openDlg(id){editing=id||null;const w=id?S.watches.find(x=>x.id===id):{type:'change',notify_stock:true,render:'auto'};
+  $('#dTitle').textContent=id?'Editar web':'Añadir web';
+  $('#fUrl').value=w.url||'';$('#fName').value=w.name||'';$(`input[name=ftype][value=${w.type==='price'?'product':(w.type||'change')}]`).checked=true;
+  $('#fInt').value=w.interval?String(w.interval):'';$('#fBelow').value=w.below??'';$('#fDrop').value=w.drop_percent??'';
+  $('#fMin').checked=!!w.notify_min;$('#fStock').checked=w.notify_stock!==false;$('#fAny').checked=!!w.any_change;
+  $('#fApp').value=(w.appears||[]).join(', ');$('#fDis').value=(w.disappears||[]).join(', ');
+  $('#fSel').value=w.selector||'';$('#fIgn').value=(w.ignore||[]).join('\n');$('#fRender').value=w.render||'auto';
+  $('#fAdv').open=!!(w.selector||(w.ignore||[]).length||(w.render&&w.render!=='auto'));
+  $('#fPrev').className='preview';syncDlg();closeDrawer();$('#dlg').showModal();if(!id)$('#fUrl').focus()}
+function formData(){const o=S.watches.find(x=>x.id===editing)||{};return{id:editing,enabled:o.enabled!==false,url:$('#fUrl').value.trim(),name:$('#fName').value,type:ftype(),interval:$('#fInt').value,
+  below:$('#fBelow').value,drop_percent:$('#fDrop').value,notify_min:$('#fMin').checked,notify_stock:$('#fStock').checked,any_change:$('#fAny').checked,
+  appears:$('#fApp').value,disappears:$('#fDis').value,selector:$('#fSel').value,ignore:$('#fIgn').value,render:$('#fRender').value}}
+$('#add').onclick=()=>openDlg();$('#fCancel').onclick=()=>$('#dlg').close();
+$('#fTest').onclick=async e=>{const P=$('#fPrev'),b=e.currentTarget;P.className='preview on';P.innerHTML='<span class="spin"></span> Leyendo la página… (las tiendas pueden tardar 10-20 s)';b.disabled=true;
+  try{const r=await api('/api/test',formData());if(r.title&&!$('#fName').value)$('#fName').value=r.title.slice(0,60);
+    if(r.url&&r.url!==$('#fUrl').value)$('#fUrl').value=r.url;
+    P.innerHTML=ftype()==='product'?`<div class="pt">${esc(r.title||'Producto')}</div><div class="pp">${money(r.price,r.currency)}</div><div class="sub">${r.available===true?'✅ Hay stock':r.available===false?'❌ Sin stock':'Stock desconocido'} · leído con ${esc(r.via)}</div>`
+      :`<div class="pt">✅ Esto es lo que ve el bot</div><div class="sub" style="white-space:normal;margin-top:4px">${esc((r.value||'(vacío)').slice(0,400))}</div><div class="sub">leído con ${esc(r.via)}</div>`}
+  catch(x){P.className='preview on bad';P.innerHTML=esc(x.message)+(x.blocked?` <button class="btn sm" data-bot="${esc($('#fUrl').value)}" style="margin-left:6px">Resolver en el navegador del bot</button>`:'')}finally{b.disabled=false}};
+$('#fSave').onclick=e=>busy(e.currentTarget,async()=>{await api('/api/watch',formData());$('#dlg').close();await load()},editing?'Cambios guardados':'Añadida. La primera lectura será la referencia.');
+
+/* ---- teclado */
+document.addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName)||document.querySelector('dialog[open]');
+  if(e.key==='Escape'){closePop();if(openId)closeDrawer()}
+  if(typing||e.metaKey||e.ctrlKey||e.altKey)return;
+  if(e.key==='/'){e.preventDefault();gotoTab('webs');$('#q').focus()}
+  if(e.key==='n'){e.preventDefault();openDlg()}
+  if(e.key==='r'){e.preventDefault();runAll()}
+  if(e.key==='1')gotoTab('webs');if(e.key==='2')gotoTab('hist');if(e.key==='3')gotoTab('set')});
+
+/* ---- arranque */
+window.gotoTab=gotoTab;window.openDlg=openDlg;window.load=load;window.runAll=runAll;
+load().then(()=>{const h=location.hash.slice(1);if(h==='add')openDlg();else if(['webs','hist','set'].includes(h))gotoTab(h)}).catch(e=>toast('No conecto con WebWatch: '+e.message,true));
+setInterval(()=>{if(!document.hidden&&!document.querySelector('dialog[open]'))load().catch(()=>{})},15000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().catch(()=>{})});
+</script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+#!/bin/bash
+# Lanzador de WebWatch. La primera vez (o tras actualizar) prepara todo solo.
+CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
+BUNDLE="$(cd "$CONTENTS/.." && pwd)"
+RES="$CONTENTS/Resources"
+SUP="$HOME/Library/Application Support/WebWatch"
+PY="$SUP/venv/bin/python"
+VER="$(cat "$RES/app/VERSION" 2>/dev/null)"
+mkdir -p "$SUP"
+
+# ¿Abierta desde el .dmg o desde Descargas? Ofrece moverla a Aplicaciones (lo típico de Mac)
+case "$BUNDLE" in
+  /Volumes/*|*/AppTranslocation/*|*/Downloads/*|*/Descargas/*)
+    DEST="/Applications"; [ -w "$DEST" ] || { DEST="$HOME/Applications"; mkdir -p "$DEST"; }
+    R=$(osascript -e "button returned of (display dialog \"WebWatch funciona mejor desde la carpeta Aplicaciones.\n\n¿La copio allí ahora?\" with title \"WebWatch\" buttons {\"Ahora no\", \"Copiar a Aplicaciones\"} default button 2 with icon note)" 2>/dev/null)
+    if [ "$R" = "Copiar a Aplicaciones" ]; then
+      SRC="$BUNDLE"
+      case "$BUNDLE" in */AppTranslocation/*) SRC="$(mdfind 'kMDItemCFBundleIdentifier == "com.webwatch.app"' | grep -v AppTranslocation | head -1)"; [ -n "$SRC" ] || SRC="$BUNDLE";; esac
+      rm -rf "$DEST/WebWatch.app" && ditto "$SRC" "$DEST/WebWatch.app" && xattr -dr com.apple.quarantine "$DEST/WebWatch.app" 2>/dev/null
+      open "$DEST/WebWatch.app"
+      exit 0
+    fi;;
+esac
+echo "$BUNDLE" > "$SUP/app_path.txt"
+
+if [ ! -x "$PY" ] || [ "$(cat "$SUP/.installed" 2>/dev/null)" != "$VER" ] || [ ! -f "$SUP/app/webwatch.py" ]; then
+  /bin/bash "$RES/setup.sh" || exit 1
+fi
+
+if "$PY" -c "import AppKit, WebKit" >/dev/null 2>&1; then
+  exec "$PY" "$SUP/app/macapp.py" "$@" 2>>"$SUP/webwatch.log"
+fi
+exec "$PY" "$SUP/app/webwatch.py" ui
