@@ -1,0 +1,76 @@
+# Publica WebWatch-<versión>.dmg en GitHub Releases cada vez que cambia la versión.
+#
+# Cómo sabe que hay versión nueva:
+#   1. Solo se pone en marcha si el push a main toca el archivo VERSION.
+#   2. Lee VERSION (p. ej. 2.4.3) y mira si ya existe la release v2.4.3.
+#      Si existe, no hace nada; si no, crea el .dmg y la release.
+# También se puede lanzar a mano: pestaña Actions → «Release DMG» → Run workflow.
+name: Release DMG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - WebWatch.app/Contents/Resources/app/VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Leer versión y comprobar si ya está publicada
+        id: ver
+        run: |
+          VER="$(tr -d '[:space:]' < WebWatch.app/Contents/Resources/app/VERSION)"
+          PLIST="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' WebWatch.app/Contents/Info.plist)"
+          if [ "$VER" != "$PLIST" ]; then
+            echo "::error::VERSION ($VER) e Info.plist ($PLIST) no coinciden"
+            exit 1
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "La release v$VER ya existe: nada que hacer."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Crear el .dmg
+        id: dmg
+        if: steps.ver.outputs.exists == 'false'
+        run: bash crear-dmg.sh
+
+      - name: Publicar la release
+        if: steps.ver.outputs.exists == 'false'
+        run: |
+          VER="${{ steps.ver.outputs.version }}"
+          cat > notes.md <<'EOF'
+          ## Instalar
+
+          1. Descarga `WebWatch-VERSION.dmg`, ábrelo y arrastra WebWatch a Aplicaciones.
+          2. La primera vez macOS dirá que no puede comprobar la app (no está firmada con
+             Developer ID). Abre Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente»,
+             o haz clic derecho en WebWatch → Abrir. Solo hace falta una vez.
+
+          Si ya la tienes instalada, basta con sustituirla: tus webs y ajustes se conservan.
+          EOF
+          sed -i '' "s/VERSION/$VER/" notes.md
+          gh release create "v$VER" "${{ steps.dmg.outputs.dmg }}" \
+            --title "WebWatch $VER" \
+            --notes-file notes.md \
+            --generate-notes \
+            --target "$GITHUB_SHA"

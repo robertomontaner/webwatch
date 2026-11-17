@@ -4,14 +4,12 @@ Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, 
 
 ## Instalar (como cualquier app de Mac)
 
-**Opción A · con el .dmg clásico (recomendada)**
-1. Descomprime el zip y, en Terminal, ejecuta una sola vez:
-   ```
-   bash ~/Downloads/WebWatch/crear-dmg.sh
-   ```
-   Se crea `WebWatch-2.4.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
-2. Abre el `.dmg` y **arrastra WebWatch a Aplicaciones**.
-3. Abre WebWatch desde Aplicaciones o Launchpad. La primera vez te saluda y se prepara sola (1-3 min). Cuando acaba, te avisa con una notificación.
+**Opción A · descarga el .dmg (recomendada)**
+1. Descarga el último `WebWatch-<versión>.dmg` de [Releases](https://github.com/robertomontaner/webwatch/releases/latest).
+2. Ábrelo y **arrastra WebWatch a Aplicaciones**.
+3. Abre WebWatch desde Aplicaciones o Launchpad. La primera vez macOS dirá que no puede comprobar la app: Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente» (o clic derecho → Abrir). Después te saluda y se prepara sola (1-3 min) y te avisa con una notificación.
+
+También puedes crear el .dmg en tu Mac con `bash crear-dmg.sh` (la primera vez macOS pide permiso para que Terminal controle el Finder, para colocar el fondo y los iconos: acepta).
 
 **Opción B · sin .dmg:** arrastra `WebWatch.app` de la carpeta descomprimida a Aplicaciones. Si macOS la bloquea, ejecuta `bash ~/Downloads/WebWatch/firmar.sh`.
 
@@ -86,6 +84,13 @@ bash firmar.sh /Applications/WebWatch.app "Developer ID Application: Nombre (TEA
 ```
 
 La firma local basta para tu Mac. Para pasarle la app a otras personas sin avisos hace falta una cuenta de Apple Developer y notarizarla; los comandos están en el propio script.
+
+## Publicar una versión nueva (para quien mantiene el repo)
+
+1. Sube el número en `WebWatch.app/Contents/Resources/app/VERSION` y en `WebWatch.app/Contents/Info.plist` (los dos iguales).
+2. Commit y push a `main`.
+
+GitHub Actions (`.github/workflows/release.yml`) ve que cambió `VERSION`, crea `WebWatch-<versión>.dmg` en un Mac de GitHub y lo publica en Releases como `v<versión>`. Si esa release ya existe, no hace nada. Si los dos números no coinciden, falla y avisa. También se puede lanzar a mano desde la pestaña Actions → «Release DMG» → Run workflow.
 
 ## Desinstalar
 

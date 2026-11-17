@@ -45,8 +45,9 @@ hdiutil create -quiet -volname "$VOL" -srcfolder "$STAGE" -fs HFS+ -format UDRW 
 hdiutil attach -quiet -readwrite -noverify -noautoopen "$TMP"
 command -v SetFile >/dev/null && SetFile -a C "/Volumes/$VOL" || true
 
-# Colocación de iconos y fondo (la primera vez macOS pide permiso para controlar el Finder: acepta)
-if osascript <<EOF
+# Colocación de iconos y fondo (la primera vez macOS pide permiso para controlar el Finder: acepta).
+# Con tiempo límite: en GitHub Actions el Finder a veces no responde y se quedaría colgado.
+if perl -e 'alarm shift; exec @ARGV' 90 osascript <<EOF
 tell application "Finder"
   tell disk "$VOL"
     open
@@ -79,4 +80,8 @@ hdiutil convert -quiet "$TMP" -format UDZO -imagekey zlib-level=9 -o "$OUT"
 echo
 echo "${G}${B}✓ Creado: $OUT${N}"
 echo "  Ábrelo con doble clic y arrastra WebWatch a Aplicaciones."
-open -R "$OUT"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "dmg=$OUT" >> "$GITHUB_OUTPUT"   # para que el workflow sepa qué subir
+elif [ -z "${CI:-}" ]; then
+  open -R "$OUT"
+fi
