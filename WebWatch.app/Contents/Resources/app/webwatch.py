@@ -607,8 +607,138 @@ def read_progress():
 
 
 # ================================================================ descarga
+def _chrome_bin():
+    for app in ("/Applications/Google Chrome.app", str(Path.home() / "Applications/Google Chrome.app")):
+        b = f"{app}/Contents/MacOS/Google Chrome"
+        if os.access(b, os.X_OK):
+            return b
+    return None
+
+
+def _spawn_disclaimed(argv):
+    """Lanza un proceso que macOS trata como «responsable de sí mismo» (como si lo abrieras desde el Dock).
+    Sin esto, cuando Chrome toca su propio .app al arrancar (limpieza tras actualizarse), macOS culpa a quien
+    lo lanzó y sale «Se ha impedido que python3.12 / WebWatch pueda modificar apps de tu Mac»."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    attr, fa, pid = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_int(0)
+    libc.posix_spawnattr_init(ctypes.byref(attr))
+    libc.posix_spawn_file_actions_init(ctypes.byref(fa))
+    try:
+        libc.responsibility_spawnattrs_setdisclaim(ctypes.byref(attr), 1)
+        for fd in (0, 1, 2):
+            libc.posix_spawn_file_actions_addopen(ctypes.byref(fa), fd, b"/dev/null", os.O_RDWR, 0)
+        cargv = (ctypes.c_char_p * (len(argv) + 1))(*[a.encode() for a in argv], None)
+        env = [f"{k}={v}".encode() for k, v in os.environ.items()]
+        cenv = (ctypes.c_char_p * (len(env) + 1))(*env, None)
+        rc = libc.posix_spawn(ctypes.byref(pid), argv[0].encode(), ctypes.byref(fa), ctypes.byref(attr), cargv, cenv)
+        if rc:
+            raise OSError(rc, os.strerror(rc))
+        return pid.value
+    finally:
+        libc.posix_spawn_file_actions_destroy(ctypes.byref(fa))
+        libc.posix_spawnattr_destroy(ctypes.byref(attr))
+
+
+def _launch_chrome_cdp(pw, headless):
+    """Chrome real lanzado por nosotros (descolgado) y Playwright conectado por CDP."""
+    binp = _chrome_bin()
+    if not binp or platform.system() != "Darwin":
+        return None
+    _kill_leftover_chrome()
+    port_file = PROFILE_DIR / "DevToolsActivePort"
+    port_file.unlink(missing_ok=True)
+    args = [binp, f"--user-data-dir={PROFILE_DIR}", "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1",
+            "--no-first-run", "--no-default-browser-check", "--use-mock-keychain", "--password-store=basic",
+            "--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding", "--disable-blink-features=AutomationControlled", "--lang=es-ES", "--accept-lang=es-ES,es;q=0.9,en;q=0.8"]
+    if headless:
+        args += ["--headless=new", f"--user-agent={CHROME_UA}", "--window-size=1366,900", "--hide-scrollbars",
+                 "--mute-audio"]
+    args.append("about:blank")
+    pid = _spawn_disclaimed(args)
+    import atexit
+    atexit.register(_kill_tree, pid)  # si Python sale a medias, que no quede Chrome suelto
+    port = None
+    for _ in range(150):  # hasta 15 s
+        try:
+            port = int(port_file.read_text().split()[0])
+            break
+        except Exception:  # noqa: BLE001
+            time.sleep(0.1)
+    try:
+        if not port:
+            raise RuntimeError("Chrome no abrió el puerto de control")
+        browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=20000)
+        ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+    except Exception:
+        _kill_tree(pid)
+        raise
+
+    def close():
+        try:
+            browser.close()
+        except Exception:  # noqa: BLE001
+            pass
+        _kill_tree(pid)
+    ctx.close = close  # el resto del código cierra con ctx.close() como antes
+    return ctx
+
+
+def _kill_leftover_chrome():
+    """Chrome del bot que quedó abierto de una ejecución que murió (no tiene a Playwright como padre)."""
+    key = f"--user-data-dir={PROFILE_DIR} "
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True).stdout
+    except Exception:  # noqa: BLE001
+        return
+    pids = [int(l.split(None, 1)[0]) for l in out.splitlines()
+            if key in l + " " and "--type=" not in l and "Google Chrome" in l]
+    for p in pids:
+        try:
+            os.kill(p, 15)
+        except OSError:
+            pass
+    for _ in range(50):
+        alive = []
+        for p in pids:
+            try:
+                os.kill(p, 0)
+                alive.append(p)
+            except OSError:
+                pass
+        if not alive:
+            return
+        time.sleep(0.1)
+    for p in alive:
+        try:
+            os.kill(p, 9)
+        except OSError:
+            pass
+
+
+def _kill_tree(pid):
+    try:
+        os.kill(pid, 15)
+        for _ in range(30):
+            time.sleep(0.1)
+            if os.waitpid(pid, os.WNOHANG)[0]:
+                return
+        os.kill(pid, 9)
+        os.waitpid(pid, 0)
+    except (OSError, ChildProcessError):
+        pass
+
+
 def launch_ctx(pw, headless):
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        ctx = _launch_chrome_cdp(pw, headless)
+        if ctx:
+            ctx.add_cookies([{"name": "aep_usuc_f", "value": ALI_COOKIE, "domain": ".aliexpress.com", "path": "/"}])
+            return ctx
+    except Exception as e:  # noqa: BLE001
+        print("Chrome descolgado no arrancó, uso el modo clásico:", str(e)[:160], flush=True)
     kw = {"headless": headless, "locale": "es-ES"}
     if headless:
         kw.update(user_agent=CHROME_UA, viewport={"width": 1366, "height": 900})
