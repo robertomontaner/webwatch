@@ -1,4 +1,4 @@
-# 👁 WebWatch 2.2 para Mac
+# 👁 WebWatch 2.3 para Mac
 
 Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, ofertas en Amazon o AliExpress, stock... Funciona **sin IA**: solo aplica las reglas que tú le pones. Todo se queda en tu Mac.
 
@@ -9,7 +9,7 @@ Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, 
    ```
    bash ~/Downloads/WebWatch/crear-dmg.sh
    ```
-   Se crea `WebWatch-2.2.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
+   Se crea `WebWatch-2.3.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
 2. Abre el `.dmg` y **arrastra WebWatch a Aplicaciones**.
 3. Abre WebWatch desde Aplicaciones o Launchpad. La primera vez te saluda y se prepara sola (1-3 min). Cuando acaba, te avisa con una notificación.
 

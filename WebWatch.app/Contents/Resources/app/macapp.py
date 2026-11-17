@@ -80,6 +80,7 @@ class AppDelegate(NSObject):
         self.status = NSStatusBar.systemStatusBar().statusItemWithLength_(NSVariableStatusItemLength)
         self.status_menu = NSMenu.alloc().init()
         self.status_menu.setAutoenablesItems_(False)
+        self.status_menu.setDelegate_(self)  # se refresca al abrirlo (paso actual de la revisión)
         self.status.setMenu_(self.status_menu)
         self.dock_menu = NSMenu.alloc().init()
         self.dock_menu.setAutoenablesItems_(False)
@@ -98,6 +99,9 @@ class AppDelegate(NSObject):
 
     def applicationDockMenu_(self, sender):
         return self.dock_menu
+
+    def menuWillOpen_(self, menu):
+        self.refresh_(None)
 
     def windowWillClose_(self, note):
         app().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -310,6 +314,8 @@ class AppDelegate(NSObject):
         except Exception as e:  # noqa: BLE001
             print("refresh:", e, flush=True)
             return
+        prog = ww.read_progress()
+        busy = self.running or prog.get("running")
         alerts = [h for h in hist if h.get("status") == "ALERTA"]
         self.unseen = sum(1 for h in alerts if h.get("t", "") > seen)
         app().dockTile().setBadgeLabel_(str(self.unseen) if self.unseen else "")
@@ -323,14 +329,20 @@ class AppDelegate(NSObject):
         M.removeAllItems()
         sep = NSMenuItem.separatorItem
         M.addItem_(self.mi(f"WebWatch · {n} webs vigiladas", enabled=False))
-        M.addItem_(self.mi("⏳ Revisando…" if self.running else
-                           f"Última revisión: {ago(max(times)) if times else 'nunca'}", enabled=False))
+        if prog.get("running"):
+            M.addItem_(self.mi(f"⏳ Revisando {prog.get('i', 0)} de {prog.get('n', 0)} · {short(prog.get('name'), 30)}",
+                               "showWindow:"))
+            if prog.get("step"):
+                M.addItem_(self.mi(f"    {short(prog['step'], 50)}", enabled=False))
+        else:
+            M.addItem_(self.mi("⏳ Revisando…" if self.running else
+                               f"Última revisión: {ago(max(times)) if times else 'nunca'}", enabled=False))
         if paused:
             M.addItem_(self.mi("⏸ Revisión automática en pausa", enabled=False))
         if errors:
             M.addItem_(self.mi(f"⚠️ Con problemas: {short(', '.join(errors), 40)}", "showWindow:"))
         M.addItem_(sep())
-        M.addItem_(self.mi("Revisar ahora", "runNow:", "r", enabled=not self.running))
+        M.addItem_(self.mi("Revisar ahora", "runNow:", "r", enabled=not busy))
         M.addItem_(self.mi("Abrir WebWatch", "showWindow:", "o"))
         M.addItem_(self.mi("Añadir web…", "addWatch:", "n"))
         M.addItem_(sep())
@@ -358,7 +370,7 @@ class AppDelegate(NSObject):
 
         D = self.dock_menu
         D.removeAllItems()
-        D.addItem_(self.mi("Revisando…" if self.running else "Revisar ahora", "runNow:", enabled=not self.running))
+        D.addItem_(self.mi("Revisando…" if busy else "Revisar ahora", "runNow:", enabled=not busy))
         D.addItem_(self.mi("Añadir web…", "addWatch:"))
         if self.unseen:
             D.addItem_(self.mi(f"Ver {self.unseen} alertas sin ver", "showHistory:"))

@@ -63,6 +63,13 @@ main{overflow:auto;min-width:0}
 .stat .k{color:var(--mut);font-size:12px}.stat .v{font-size:21px;font-weight:650;letter-spacing:-.02em;margin-top:2px}
 .stat .v small{font-size:12.5px;font-weight:500;color:var(--mut)}
 .banner{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:10px;margin-bottom:10px;background:var(--acc-soft);font-size:13px}
+.prog{background:var(--card);border:1px solid color-mix(in srgb,var(--acc) 35%,var(--line));border-radius:var(--r);padding:13px 15px;margin-bottom:12px;box-shadow:var(--shadow);font-size:13px}
+.prog .hd{display:flex;align-items:center;gap:10px}.prog .hd b{font-size:13.5px}.prog .hd .el{margin-left:auto;color:var(--mut);font-variant-numeric:tabular-nums}
+.prog .stp{margin:6px 0 9px 24px;color:var(--mut)}
+.prog .bar{height:5px;border-radius:3px;background:var(--line2);overflow:hidden}.prog .bar i{display:block;height:100%;background:var(--acc);border-radius:3px;transition:width .5s}
+.prog .tip{margin-top:8px;color:var(--faint);font-size:12px;min-height:15px;transition:opacity .4s}
+.prog ul{list-style:none;margin:9px 0 0;padding:0;display:grid;gap:3px}.prog li{color:var(--mut);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.prog.fin{border-color:var(--line)}
 .banner.warn{background:var(--warn-soft)}.banner.err{background:var(--err-soft)}
 .banner .btn{margin-left:auto}
 .list{display:flex;flex-direction:column;gap:10px}
@@ -196,6 +203,7 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
       <div class="stat"><div class="k">Última revisión</div><div class="v" id="sLast">—</div></div>
       <div class="stat"><div class="k">Próxima revisión</div><div class="v" id="sNext">—</div></div>
     </div>
+    <div id="prog"></div>
     <div id="banners"></div>
     <div class="list" id="list"></div>
   </section>
@@ -430,11 +438,50 @@ $('#autoBox').onclick=()=>gotoTab('set');
 $('#q').oninput=renderWebs;$('#hq').oninput=renderHist;$('#hWeb').onchange=renderHist;
 $$('#hSeg button').forEach(b=>b.onclick=()=>{hFilter=b.dataset.f;$$('#hSeg button').forEach(x=>x.classList.toggle('on',x===b));renderHist()});
 
+/* ---- progreso en vivo: qué está haciendo ahora */
+let P={},pTimer=null,tipI=0,finAt=0;
+const TIPS={
+  aliexpress:['AliExpress pinta el precio con JavaScript: hay que abrir un navegador real.','Si AliExpress pide captcha, te lo diré y no insistiré hasta que lo resuelvas.','Las tiendas grandes tardan más: cargan muchos anuncios y rastreadores.'],
+  amazon:['Amazon a veces pide captcha si se revisa muy a menudo.','Leyendo precio, título y stock…'],
+  web:['Comparo el texto con la última vez para ver qué ha cambiado.','La primera lectura de cada web sirve de referencia.'],
+  any:['Entre web y web hago una pausa corta para no parecer un robot.','Todo se queda en tu Mac: no se envía nada a ningún servidor.']};
+const ICON={OK:'✓',ALERTA:'🔔',ERROR:'⚠️'};
+function secs(a,b){return Math.max(0,Math.round((T(b)-T(a))/1000))}
+function fmtS(s){return s<60?s+' s':Math.floor(s/60)+' min '+String(s%60).padStart(2,'0')+' s'}
+function renderProg(){
+  const el=$('#prog');if(!el)return;const btn=$('#runAll');
+  if(P.running){
+    const pct=P.n?Math.round(((P.i-1)+.5)/P.n*100):5,el2=secs(P.started,P.now||P.t);
+    const pool=[...(TIPS[storeOf(P.url)]||TIPS.web),...TIPS.any];
+    el.className='prog';
+    el.innerHTML=`<div class="hd"><span class="spin" style="color:var(--acc)"></span><b>Revisando ${P.i||0} de ${P.n||0}${P.name?' · '+esc(P.name):''}</b><span class="el">${fmtS(el2)}</span></div>
+      <div class="stp">${esc(P.step||'')}</div><div class="bar"><i style="width:${pct}%"></i></div>
+      ${(P.done||[]).length?`<ul>${P.done.map(d=>`<li>${ICON[d.status]||'·'} ${esc(d.name)} — ${esc(d.note)}</li>`).join('')}</ul>`:''}
+      <div class="tip">💡 ${esc(pool[tipI%pool.length])}</div>`;
+    if(btn&&!btn.disabled){btn.disabled=true;btn.dataset.html=btn.innerHTML;btn.innerHTML=`<span class="spin"></span> ${P.i||0}/${P.n||0}…`}
+  }else{
+    if(btn&&btn.dataset.html){btn.disabled=false;btn.innerHTML=btn.dataset.html;delete btn.dataset.html}
+    if(P.finished&&Date.now()-finAt<8000&&(P.done||[]).length){const d=P.done,a=d.filter(x=>x.status==='ALERTA').length,e=d.filter(x=>x.status==='ERROR').length;
+      el.className='prog fin';el.innerHTML=`<div class="hd"><b>✓ Revisión terminada · ${d.length} ${d.length===1?'web':'webs'}${a?' · 🔔 '+a:''}${e?' · ⚠️ '+e+' con error':''}</b></div><ul>${d.map(x=>`<li>${ICON[x.status]||'·'} ${esc(x.name)} — ${esc(x.note)}</li>`).join('')}</ul>`}
+    else el.innerHTML='';
+  }
+}
+async function pollProg(){
+  clearTimeout(pTimer);let was=P.running;
+  try{P=await api('/api/progress')}catch(e){}
+  if(P.running&&!was)tipI=Math.floor(Math.random()*5);
+  if(was&&!P.running){finAt=Date.now();load().catch(()=>{})}
+  if(P.running&&secs(P.started,P.now)%6===0)tipI++;
+  renderProg();
+  pTimer=setTimeout(pollProg,P.running?1000:(document.hidden?15000:4000));
+}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollProg()});
+
 /* ---- acciones */
-async function runAll(){const b=$('#runAll');b.dataset.busy=' Revisando…';await busy(b,()=>api('/api/run',{}),r=>{const a=r.results.filter(x=>x.status==='ALERTA').length,er=r.results.filter(x=>x.status==='ERROR').length;
+async function runAll(){const b=$('#runAll');b.dataset.busy=' Revisando…';setTimeout(pollProg,300);await busy(b,()=>api('/api/run',{}),r=>{const a=r.results.filter(x=>x.status==='ALERTA').length,er=r.results.filter(x=>x.status==='ERROR').length;
   return `${r.results.length} revisadas · ${a} ${a===1?'alerta':'alertas'}${er?' · '+er+' con error':''}`});load()}
 $('#runAll').onclick=runAll;
-async function runOne(id,btn){const f=()=>api('/api/run',{id});const msg=r=>{const x=r.results[0];return x?(x.status==='ALERTA'?'🔔 '+x.detail:x.status==='ERROR'?'⚠️ '+x.note:'✓ '+x.note+(x.value&&x.type==='product'?' · '+x.value:'')):'Hecho'};
+async function runOne(id,btn){const f=()=>{setTimeout(pollProg,300);return api('/api/run',{id})};const msg=r=>{const x=r.results[0];return x?(x.status==='ALERTA'?'🔔 '+x.detail:x.status==='ERROR'?'⚠️ '+x.note:'✓ '+x.note+(x.value&&x.type==='product'?' · '+x.value:'')):'Hecho'};
   if(btn)await busy(btn,f,msg);else{toast('Revisando…');try{toast(msg(await f()))}catch(e){toast(e.message,true)}}load()}
 async function act(a,id,btn){const w=S.watches.find(x=>x.id===id);closePop();
   if(a==='run')return runOne(id,btn);
@@ -538,6 +585,7 @@ document.addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT
 window.gotoTab=gotoTab;window.openDlg=openDlg;window.load=load;window.runAll=runAll;
 load().then(()=>{const h=location.hash.slice(1);if(h==='add')openDlg();else if(['webs','hist','set'].includes(h))gotoTab(h)}).catch(e=>toast('No conecto con WebWatch: '+e.message,true));
 setInterval(()=>{if(!document.hidden&&!document.querySelector('dialog[open]'))load().catch(()=>{})},15000);
+pollProg();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().catch(()=>{})});
 </script>
 </body>

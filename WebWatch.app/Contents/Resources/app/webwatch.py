@@ -49,7 +49,9 @@ UI_PATH = DATA / "ui.json"
 LOG_PATH = DATA / "webwatch.log"
 PROFILE_DIR = DATA / "browser-profile"
 RUN_LOCK = DATA / ".run.lock"
+PROGRESS_PATH = DATA / "progress.json"
 BROWSER_LOCK = DATA / ".browser.lock"
+BOT_PID = DATA / ".bot-browser.pid"
 APP_PATH_FILE = DATA / "app_path.txt"
 LABEL = "com.webwatch.bot"
 LABEL_MENUBAR = "com.webwatch.menubar"
@@ -519,6 +521,36 @@ def friendly_error(e, url):
     return msg.split("\nCall log:")[0]
 
 
+# ================================================================ progreso (lo que está haciendo ahora)
+_PROGRESS = {}
+
+
+def progress(**kw):
+    """Guarda el paso actual de la revisión para que el panel y el menú lo enseñen en vivo."""
+    _PROGRESS.update(kw, t=now(), pid=os.getpid())
+    try:
+        tmp = PROGRESS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_PROGRESS, ensure_ascii=False))
+        tmp.replace(PROGRESS_PATH)
+    except OSError:
+        pass
+
+
+def step(text):
+    if _PROGRESS.get("running"):
+        progress(step=text)
+
+
+def read_progress():
+    p = load_json(PROGRESS_PATH, {})
+    if p.get("running"):
+        try:
+            os.kill(int(p.get("pid", 0)), 0)
+        except (OSError, ValueError):
+            p["running"] = False  # el proceso murió a medias
+    return p
+
+
 # ================================================================ descarga
 def launch_ctx(pw, headless):
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -551,6 +583,7 @@ class Fetcher:
         self._pw = self._ctx = self._lock = None
 
     def http(self, url, store):
+        step("Descargando la página…")
         cookies = {"aep_usuc_f": ALI_COOKIE} if store == "aliexpress" else None
         r = self.s.get(url, headers=HTTP_HEADERS, timeout=self.timeout, cookies=cookies)
         if store and r.status_code in (403, 429, 503):
@@ -572,6 +605,7 @@ class Fetcher:
             self._lock.close()
             self._lock = None
             raise RuntimeError("La ventana del navegador del bot está abierta: ciérrala para que pueda revisar")
+        step("Abriendo el navegador del bot (tarda unos segundos)…")
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
         self._ctx = launch_ctx(self._pw, headless=True)
@@ -579,6 +613,7 @@ class Fetcher:
 
     def browser(self, url, store):
         page = self._context().new_page()
+        step("Cargando la página en el navegador del bot…")
         try:
             try:
                 # Con tienda conocida basta con que empiece a llegar la página: luego se espera
@@ -589,6 +624,8 @@ class Fetcher:
                 # página, se sigue; si no, error.
                 if type(e).__name__ != "TimeoutError" or not page.url.startswith("http"):
                     raise
+            step(f"Esperando a que {STORE_NAMES[store]} muestre el precio…" if WAIT_SEL.get(store)
+                 else "Esperando a que termine de cargar…")
             try:
                 if WAIT_SEL.get(store):
                     page.wait_for_selector(WAIT_SEL[store], timeout=30000)
@@ -852,7 +889,10 @@ def run_checks(ids=None):
                    if (ids is None and w.get("enabled", True)) or (ids is not None and w["id"] in ids)]
         fetcher = Fetcher(defaults)
         results, renamed = [], False
+        progress(running=True, started=now(), finished=None, n=len(watches), i=0, name="", url="",
+                 step="Preparando…", done=[])
         for i, w in enumerate(watches):
+            progress(i=i + 1, name=w["name"], url=w["url"], step="Empezando…")
             st = state.setdefault(w["id"], {})
             res = {"t": now(), "id": w["id"], "name": w["name"], "url": w["url"],
                    "type": w.get("type", "change"), "detail": "", "price": None}
@@ -907,7 +947,10 @@ def run_checks(ids=None):
             save_json(STATE_PATH, state)
             save_json(HISTORY_PATH, history[-3000:])
             print(f"[{res['t']}] {w['name']}: {res['status']} ({res['note']})", flush=True)
+            _PROGRESS.setdefault("done", []).append({"name": w["name"], "status": res["status"],
+                                                     "note": res.get("detail") or res.get("note") or ""})
             if i < len(watches) - 1:
+                progress(step="Pausa breve antes de la siguiente web…")
                 time.sleep(defaults.get("pause_seconds", 3))
         if renamed:
             fresh = load_config()
@@ -921,6 +964,8 @@ def run_checks(ids=None):
     finally:
         if fetcher:
             fetcher.close()
+        if _PROGRESS.get("running"):
+            progress(running=False, finished=now(), step="")
         fcntl.flock(lock, fcntl.LOCK_UN)
         lock.close()
 
@@ -1051,7 +1096,7 @@ def build_view():
             "unseen": sum(1 for h in alerts if h["t"] > seen),
             "alerts_today": sum(1 for h in alerts if h["t"].startswith(today)),
             "last_run": max(lasts) if lasts else None, "next_run": min(nexts) if nexts else None,
-            "schedule": schedule_status(), "playwright": has_playwright(), "platform": platform.system(),
+            "schedule": schedule_status(), "playwright": has_playwright(), "progress": read_progress(), "platform": platform.system(),
             "now": now(), "version": VERSION, "data_dir": str(DATA), "tick_minutes": TICK_SECONDS // 60}
 
 
@@ -1120,6 +1165,15 @@ def start_bot_browser(url):
     subprocess.Popen([venv_python(), str(BASE / "webwatch.py"), "browser", url], stdout=log, stderr=log,
                      start_new_session=True, cwd=str(DATA))
 
+    def front():  # desde la app activa (la ventana de WebWatch) macOS sí deja pasar el foco a Chrome
+        for _ in range(60):
+            time.sleep(0.5)
+            if bring_bot_chrome_front():
+                time.sleep(2.5)  # al cargar la página Chrome puede quedarse detrás otra vez
+                bring_bot_chrome_front()
+                return
+    threading.Thread(target=front, daemon=True).start()
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "WebWatch"
@@ -1152,6 +1206,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "app": "webwatch"})
         if path == "/api/state":
             return self._send(200, build_view())
+        if path == "/api/progress":
+            return self._send(200, dict(read_progress(), now=now()))
         self._send(404, {"error": "no encontrado"})
 
     def do_POST(self):
@@ -1355,14 +1411,69 @@ def cmd_tick(_):
         pass
 
 
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def bring_bot_chrome_front():
+    """Trae al frente la ventana del navegador del bot (Chrome no lo hace solo al lanzarlo Playwright)."""
+    try:
+        out = subprocess.run(["pgrep", "-f", f"--user-data-dir={PROFILE_DIR}"], capture_output=True, text=True).stdout
+        cmdline = lambda p: subprocess.run(["ps", "-o", "command=", "-p", p], capture_output=True, text=True).stdout  # noqa: E731
+        main_pid = next((int(p) for p in out.split() if "--type=" not in cmdline(p)), None)
+        if not main_pid:
+            return False
+        from AppKit import NSRunningApplication
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(main_pid)
+        if app is None:
+            return False
+        app.unhide()
+        return bool(app.activateWithOptions_(1 << 1))  # NSApplicationActivateIgnoringOtherApps
+    except Exception as e:  # noqa: BLE001
+        print("No pude traer al frente el navegador del bot:", e, flush=True)
+        return False
+
+
 def cmd_browser(args):
     from playwright.sync_api import sync_playwright
+    # ¿Ya hay uno abierto? Se trae al frente en vez de lanzar otro que se quedaría esperando.
+    try:
+        old = int(BOT_PID.read_text().strip())
+    except (OSError, ValueError):
+        old = 0
+    if old and old != os.getpid() and _pid_alive(old):
+        bring_bot_chrome_front()
+        return
+    BOT_PID.write_text(str(os.getpid()))
     lock = open(BROWSER_LOCK, "w")
-    fcntl.flock(lock, fcntl.LOCK_EX)  # espera si hay una revisión usando el navegador
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        notify_desktop("WebWatch", "Hay una revisión en curso: abro el navegador del bot en cuanto termine.")
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        _bot_browser_session(sync_playwright, args.url)
+    finally:
+        BOT_PID.unlink(missing_ok=True)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        lock.close()
+    recheck_blocked(args.url)
+
+
+def _bot_browser_session(sync_playwright, url):
     with sync_playwright() as pw:
         ctx = launch_ctx(pw, headless=False)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto(args.url, wait_until="domcontentloaded", timeout=60000)
+        bring_bot_chrome_front()
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:  # noqa: BLE001  (la ventana sigue abierta para que el usuario actúe)
+            print("Navegador del bot: la página tarda en cargar:", str(e).splitlines()[0], flush=True)
+        bring_bot_chrome_front()
         while True:
             try:
                 if not ctx.pages:
@@ -1374,9 +1485,6 @@ def cmd_browser(args):
             ctx.close()
         except Exception:  # noqa: BLE001
             pass
-    fcntl.flock(lock, fcntl.LOCK_UN)
-    lock.close()
-    recheck_blocked(args.url)
 
 
 def recheck_blocked(url):

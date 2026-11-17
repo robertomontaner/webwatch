@@ -55,6 +55,23 @@ if [ -e "$VENV/bin/python" ] && ! "$VENV/bin/python" -c 'import sys' >/dev/null 
 "$VENV/bin/python" -m pip install -q -r "$CODE/requirements.txt" >>"$LOG" 2>&1 \
   || fail "Falló la descarga de componentes. ¿Hay conexión a internet?"
 
+# 3b) Mac con Apple Silicon: el Python de Apple se declara «universal2» y pip puede instalar el driver
+#     de Playwright solo para Intel. Entonces el driver y Chrome corren emulados con Rosetta (lentos y
+#     con fallos al abrir el navegador del bot). Se fuerza la versión arm64.
+if [ "$(uname -m)" = "arm64" ]; then
+  NODE="$("$VENV/bin/python" -c 'import os, playwright; print(os.path.join(os.path.dirname(playwright.__file__), "driver", "node"))' 2>/dev/null)"
+  if [ -f "$NODE" ] && ! lipo -archs "$NODE" 2>/dev/null | grep -q arm64; then
+    PWV="$("$VENV/bin/python" -c 'from importlib.metadata import version; print(version("playwright"))')"
+    TMPW="$(mktemp -d)"
+    if "$VENV/bin/python" -m pip download -q "playwright==$PWV" --no-deps --only-binary=:all: \
+         --platform macosx_11_0_arm64 -d "$TMPW" >>"$LOG" 2>&1; then
+      "$VENV/bin/python" -m pip install -q --force-reinstall --no-deps "$TMPW"/playwright-*.whl >>"$LOG" 2>&1 \
+        && echo "· Playwright arm64 instalado" >>"$LOG"
+    fi
+    rm -rf "$TMPW"
+  fi
+fi
+
 # 4) Navegador del bot
 if [ -z "${WW_SKIP_BROWSER:-}" ] && [ ! -d "/Applications/Google Chrome.app" ] && [ ! -d "$HOME/Applications/Google Chrome.app" ] \
    && [ ! -d "$HOME/Library/Caches/ms-playwright" ]; then
@@ -69,6 +86,12 @@ build_runtime(){
   BASE="$("$VENV/bin/python" -c 'import sys; print(sys.base_prefix)' 2>/dev/null)" || return 1
   STUB="$BASE/Resources/Python.app/Contents/MacOS/Python"
   [ -x "$STUB" ] || return 1
+  # Solo se crea una vez (y si cambia el Python base): rehacer un .app en cada actualización hace que
+  # macOS muestre «Se ha impedido que WebWatch pueda modificar apps».
+  local SIG; SIG="2|$STUB|$(shasum "$STUB" 2>/dev/null | cut -c1-40)"
+  if [ -x "$RT/Contents/MacOS/webwatch-python" ] && [ "$(cat "$SUP/runtime/.built" 2>/dev/null)" = "$SIG" ]; then
+    return 0
+  fi
   rm -rf "$SUP/runtime" && mkdir -p "$RT/Contents/MacOS" "$RT/Contents/Resources" || return 1
   X="$RT/Contents/MacOS/webwatch-python"
   cp "$STUB" "$X" || return 1
@@ -99,7 +122,6 @@ EOS
   <key>CFBundleExecutable</key><string>WebWatch</string>
   <key>CFBundleIconFile</key><string>icon.icns</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VER</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 EOS
@@ -107,6 +129,7 @@ EOS
   # Prueba de humo: si no arranca con las librerías del venv, se descarta.
   "$X" -s -c 'import site, sys; site.addsitedir(sys.argv[1]); import AppKit, WebKit' \
     "$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" >/dev/null 2>&1 || return 1
+  echo "$SIG" > "$SUP/runtime/.built"
 }
 build_runtime || { echo "AVISO: sin intérprete propio (se usará Python tal cual)" >>"$LOG"; rm -rf "$SUP/runtime"; }
 

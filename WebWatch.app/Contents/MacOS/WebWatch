@@ -1,5 +1,13 @@
 #!/bin/bash
 # Lanzador de WebWatch. La primera vez (o tras actualizar) prepara todo solo.
+
+# En Mac con Apple Silicon, macOS lanza las apps cuyo ejecutable es un script con Rosetta (Intel emulado),
+# y todo lo que cuelga de ella (Python, Chrome del bot) hereda la emulación: lento y con fallos.
+# Si estamos emulados, nos relanzamos en nativo (mismo proceso: exec).
+if [ "$(/usr/sbin/sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ] && [ -z "${WW_NATIVE:-}" ]; then
+  export WW_NATIVE=1
+  exec /usr/bin/arch -arm64 /bin/bash "$0" "$@"
+fi
 CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
 BUNDLE="$(cd "$CONTENTS/.." && pwd)"
 RES="$CONTENTS/Resources"
