@@ -1,7 +1,8 @@
 requests
 beautifulsoup4
-openpyxl
+lxml
 playwright
 pyobjc-core; sys_platform == "darwin"
 pyobjc-framework-Cocoa; sys_platform == "darwin"
 pyobjc-framework-WebKit; sys_platform == "darwin"
+pyobjc-framework-UserNotifications; sys_platform == "darwin"

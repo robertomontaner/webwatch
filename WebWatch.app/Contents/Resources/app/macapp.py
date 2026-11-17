@@ -8,6 +8,8 @@ WebWatch - app nativa de macOS.
 Al cerrar la ventana la app sigue en la barra de menús (y desaparece del Dock).
 """
 import fcntl
+import json
+import os
 import sys
 import threading
 import time
@@ -25,6 +27,11 @@ from AppKit import (  # noqa: E402
 from Foundation import NSBundle, NSMakeRect, NSMakeSize, NSObject, NSTimer, NSURL, NSURLRequest  # noqa: E402
 from PyObjCTools import AppHelper  # noqa: E402
 from WebKit import WKWebView, WKWebViewConfiguration  # noqa: E402
+
+try:  # notificaciones nativas (clic = abre la web). Si no están, se usa el método antiguo.
+    import UserNotifications as UN  # noqa: E402
+except ImportError:
+    UN = None
 
 URL = f"http://127.0.0.1:{ww.PORT}/?app=1"
 CMD, SHIFT, OPT = 1 << 20, 1 << 17, 1 << 19
@@ -84,9 +91,15 @@ class AppDelegate(NSObject):
         self.status.setMenu_(self.status_menu)
         self.dock_menu = NSMenu.alloc().init()
         self.dock_menu.setAutoenablesItems_(False)
+        self.sig = None
+        self.un_ok = False
+        self.setup_notifications()
         self.refresh_(None)
         self.timer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             15.0, self, "refresh:", None, True)
+        self.qtimer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
+            2.0, self, "drainNotifications:", None, True)
+        threading.Thread(target=ww.telegram_loop, daemon=True).start()  # comandos /estado, /revisar…
         if "--background" not in sys.argv:
             self.showWindow_(None)
 
@@ -101,7 +114,66 @@ class AppDelegate(NSObject):
         return self.dock_menu
 
     def menuWillOpen_(self, menu):
+        self.sig = None
         self.refresh_(None)
+
+    # ------------------------------------------------------------ notificaciones nativas
+    @objc.python_method
+    def setup_notifications(self):
+        if UN is None:
+            return
+        try:
+            c = UN.UNUserNotificationCenter.currentNotificationCenter()
+            c.setDelegate_(self)
+
+            def done(granted, err):
+                self.un_ok = bool(granted)
+            c.requestAuthorizationWithOptions_completionHandler_(1 << 1 | 1 << 2, done)  # sonido + aviso
+        except Exception as e:  # noqa: BLE001
+            print("Notificaciones nativas no disponibles:", e, flush=True)
+
+    def userNotificationCenter_willPresentNotification_withCompletionHandler_(self, center, note, handler):
+        handler(1 << 1 | 1 << 4)  # mostrarla aunque la app esté delante (sonido + banner)
+
+    def userNotificationCenter_didReceiveNotificationResponse_withCompletionHandler_(self, center, resp, handler):
+        url = resp.notification().request().content().userInfo().get("url")
+        if url:
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
+        else:
+            self.show()
+        handler()
+
+    def drainNotifications_(self, timer):
+        q = ww.NOTIFY_QUEUE
+        if not q.exists() or q.stat().st_size == 0:
+            return
+        tmp = q.with_suffix(".sending")
+        try:
+            os.replace(q, tmp)
+            items = [json.loads(x) for x in tmp.read_text().splitlines() if x.strip()]
+            tmp.unlink()
+        except (OSError, ValueError):
+            return
+        for it in items:
+            self.post(it.get("title", "WebWatch"), it.get("message", ""), it.get("url"))
+
+    @objc.python_method
+    def post(self, title, message, url=None):
+        if UN is not None and self.un_ok:
+            try:
+                ct = UN.UNMutableNotificationContent.alloc().init()
+                ct.setTitle_(title)
+                ct.setBody_(message)
+                ct.setSound_(UN.UNNotificationSound.defaultSound())
+                ct.setUserInfo_({"url": url or ""})
+                req = UN.UNNotificationRequest.requestWithIdentifier_content_trigger_(
+                    f"ww-{time.time()}", ct, None)
+                UN.UNUserNotificationCenter.currentNotificationCenter().addNotificationRequest_withCompletionHandler_(
+                    req, None)
+                return
+            except Exception as e:  # noqa: BLE001
+                print("Notificación nativa falló:", e, flush=True)
+        ww.notify_legacy(title, message, url)
 
     def windowWillClose_(self, note):
         app().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
@@ -199,7 +271,6 @@ class AppDelegate(NSObject):
         m.addItem_(self.mi("Revisar ahora", "runNow:", "r"))
         m.addItem_(sep())
         m.addItem_(self.mi("Abrir CSV de observaciones", "openCSV:"))
-        m.addItem_(self.mi("Abrir Excel", "openExcel:"))
         m.addItem_(self.mi("Abrir carpeta de datos", "openFolder:"))
         m.addItem_(sep())
         m.addItem_(self.mi("Cerrar ventana", "performClose:", "w", chain=True))
@@ -258,9 +329,6 @@ class AppDelegate(NSObject):
         if url:
             NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(url))
 
-    def openExcel_(self, sender):
-        ww.open_path(ww.ensure_excel(ww.load_config()))
-
     def openCSV_(self, sender):
         p = ww.csv_path(ww.load_config())
         ww.open_path(p if p.exists() else ww.DATA)
@@ -284,7 +352,8 @@ class AppDelegate(NSObject):
         self.js("window.load&&load()")
 
     def runNow_(self, sender):
-        if self.running:
+        if self.running or ww.read_progress().get("running"):
+            self.show("webs")  # ya está revisando: enseña la tarjeta de progreso
             return
         self.running = True
         self.refresh_(None)
@@ -293,6 +362,8 @@ class AppDelegate(NSObject):
             with objc.autorelease_pool():
                 try:
                     ww.run_checks()
+                except ww.Busy:
+                    self.performSelectorOnMainThread_withObject_waitUntilDone_("showWindow:", None, False)
                 except Exception as e:  # noqa: BLE001
                     print("Revisión:", e, flush=True)
                 self.running = False
@@ -306,6 +377,16 @@ class AppDelegate(NSObject):
 
     # ------------------------------------------------------------ menú de la barra y del Dock
     def refresh_(self, timer):
+        sig = []
+        for f in (ww.CONFIG_PATH, ww.STATE_PATH, ww.HISTORY_PATH, ww.UI_PATH, ww.PROGRESS_PATH):
+            try:
+                sig.append(f.stat().st_mtime_ns)
+            except OSError:
+                sig.append(0)
+        sig = (tuple(sig), self.running, int(time.time() // 300))
+        if timer is not None and sig == self.sig:
+            return  # nada ha cambiado: no relee ni reconstruye los menús
+        self.sig = sig
         try:
             cfg = ww.load_config()
             state = ww.load_json(ww.STATE_PATH, {})
@@ -363,7 +444,6 @@ class AppDelegate(NSObject):
         p.setState_(1 if paused else 0)
         M.addItem_(p)
         M.addItem_(self.mi("Abrir CSV de observaciones", "openCSV:"))
-        M.addItem_(self.mi("Abrir Excel", "openExcel:"))
         M.addItem_(self.mi("Ajustes…", "openSettings:", ","))
         M.addItem_(sep())
         M.addItem_(self.mi("Salir de WebWatch", "terminate:", "q", target=app()))

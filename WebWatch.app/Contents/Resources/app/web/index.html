@@ -117,6 +117,7 @@ select{padding-right:26px}
 .gh+.set{border-top:0}
 .set .l{flex:1;min-width:0}.set .l b{font-weight:500;display:block}.set .l span{color:var(--mut);font-size:12.5px}
 .set input[type=text],.set input[type=password]{width:280px}
+.set input[type=time]{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 8px;flex:none;min-width:104px}
 .sw{position:relative;width:38px;height:22px;flex:none}
 .sw input{opacity:0;width:0;height:0;position:absolute}
 .sw span{position:absolute;inset:0;background:var(--line);border-radius:22px;transition:.2s;cursor:pointer}
@@ -211,7 +212,7 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
   <!-- HISTORIAL -->
   <section id="tab-hist" class="hide">
     <div class="top"><h2>Historial</h2><div class="grow"></div>
-      <button class="btn" data-open="csv">Abrir CSV</button><button class="btn" data-open="excel">Abrir Excel</button></div>
+      <button class="btn" data-open="csv">Abrir CSV</button></div>
     <div class="filters">
       <div class="seg" id="hSeg"><button data-f="all" class="on">Todo</button><button data-f="ALERTA">Alertas</button><button data-f="ERROR">Errores</button></div>
       <select id="hWeb"></select>
@@ -229,14 +230,17 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
       <div class="set"><div class="l"><b>Revisar automáticamente</b><span id="autoInfo"></span></div><label class="sw"><input type="checkbox" id="sAuto"><span></span></label></div>
       <div class="set"><div class="l"><b>Frecuencia general</b><span>Cada web puede tener la suya propia al editarla</span></div>
         <select id="sHours"><option value="0.5">Cada 30 min</option><option value="1">Cada hora</option><option value="2">Cada 2 horas</option><option value="4">Cada 4 horas</option><option value="6">Cada 6 horas</option><option value="12">Cada 12 horas</option><option value="24">Una vez al día</option></select></div>
-      <div class="set" id="loginRow"><div class="l"><b>Mostrar en la barra de menús al iniciar sesión</b><span>Icono 👁 arriba a la derecha con las últimas alertas</span></div><label class="sw"><input type="checkbox" id="sLogin"><span></span></label></div>
+      <div class="set" id="loginRow"><div class="l"><b>Al encender el Mac</b><span>Qué hace WebWatch al iniciar sesión</span></div>
+        <select id="sLogin"><option value="window">Abrir la ventana</option><option value="menubar">Solo el icono 👁 de la barra de menús</option><option value="off">No abrir</option></select></div>
     </div>
 
     <div class="group">
       <div class="gh"><h3>Avisos</h3><p>Cómo quieres enterarte cuando pase algo.</p></div>
-      <div class="set"><div class="l"><b>Notificaciones del Mac</b><span>Para que al pulsar abran la web: <code>brew install terminal-notifier</code></span></div>
+      <div class="set"><div class="l"><b>Notificaciones del Mac</b><span>Al pulsarlas se abre la web. La primera vez macOS te pide permiso para WebWatch.</span></div>
         <button class="btn sm" id="nTest">Probar</button><label class="sw"><input type="checkbox" id="sDesk"><span></span></label></div>
-      <div class="set"><div class="l"><b>Telegram</b><span>Recibe las alertas en el móvil</span></div>
+      <div class="set"><div class="l"><b>Horas de silencio</b><span>Sin notificaciones del Mac; en Telegram llegan sin sonar. Todo queda en el historial.</span></div>
+        <input type="time" id="sQFrom" value="23:00"> <span class="sub">a</span> <input type="time" id="sQTo" value="08:00"><label class="sw"><input type="checkbox" id="sQuiet"><span></span></label></div>
+      <div class="set"><div class="l"><b>Telegram</b><span>Recibe las alertas en el móvil y contrólalo con /estado, /revisar, /objetivo 2 49,99 y /pausa</span></div>
         <button class="btn sm" id="tgTest">Probar</button><label class="sw"><input type="checkbox" id="sTg"><span></span></label></div>
       <div class="set" style="display:block">
         <ol class="steps"><li>En Telegram abre <b>@BotFather</b>, escribe <code>/newbot</code> y copia el token que te da.</li><li>Pégalo abajo. Abre tu bot nuevo, pulsa <b>Iniciar</b> y escríbele «hola».</li><li>Pulsa <b>Detectar mi chat</b>.</li></ol>
@@ -247,10 +251,10 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
     <div class="group">
       <div class="gh"><h3>Registro</h3><p>Cada observación se guarda en tu Mac.</p></div>
       <div class="set"><div class="l"><b>CSV de observaciones</b><span id="csvPath"></span></div>
-        <select id="sDelim" title="Separador"><option value=";">; (Excel en español)</option><option value=",">, (internacional)</option></select>
+        <select id="sDelim" title="Separador"><option value=";">; (hojas de cálculo en español)</option><option value=",">, (internacional)</option></select>
         <button class="btn sm" data-open="csv">Abrir</button><label class="sw"><input type="checkbox" id="sCsv"><span></span></label></div>
-      <div class="set"><div class="l"><b>Excel</b><span id="xlsPath"></span></div>
-        <button class="btn sm" data-open="excel">Abrir</button><label class="sw"><input type="checkbox" id="sXls"><span></span></label></div>
+      <div class="set"><div class="l"><b>Copia de tus webs</b><span>Exporta la lista a un archivo (se guarda en Descargas) o impórtala en otro Mac</span></div>
+        <button class="btn sm" id="xExport">Exportar</button><button class="btn sm" id="xImport">Importar…</button></div>
       <div class="set"><div class="l"><b>Carpeta de datos</b><span id="dataDir"></span></div><button class="btn sm" data-open="log">Ver log</button><button class="btn sm" data-open="folder">Abrir carpeta</button></div>
     </div>
 
@@ -296,9 +300,10 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
     <div class="fld"><label>Avisar cuando DESAPAREZCA</label><input type="text" id="fDis" placeholder="agotado"></div>
   </div>
   <details class="adv" id="fAdv"><summary>Opciones avanzadas</summary>
-    <div class="fld"><label id="selLbl">Zona de la página (selector CSS)</label><input type="text" id="fSel" placeholder="Ej. #estado  o  .price">
-      <div class="hint">Vacío = automático / toda la página. Para sacarlo: Chrome → clic derecho en el elemento → Inspeccionar → clic derecho → Copy → Copy selector.</div></div>
+    <div class="fld"><label id="selLbl">Zona de la página (selector CSS)</label><div style="display:flex;gap:8px"><input type="text" id="fSel" placeholder="Ej. #estado  o  .price" style="flex:1;min-width:0"><button class="btn" id="fPick" type="button" title="Abre la página en el navegador del bot y haz clic en lo que quieres vigilar">🎯 Elegir en la página</button></div>
+      <div class="hint">Vacío = automático / toda la página. Pulsa 🎯 para abrir la página y hacer clic en lo que quieres vigilar.</div></div>
     <div class="fld" id="g-ignore"><label>Ignorar texto que cambia siempre (expresión regular por línea)</label><textarea id="fIgn" rows="2" placeholder="\d{2}:\d{2}"></textarea></div>
+    <label class="chk"><input type="checkbox" id="fShot"><span>📷 Hacer una <b>captura</b> de la página cuando avise (también por Telegram)</span></label>
     <div class="fld"><label>Cómo leer la página</label><select id="fRender"><option value="auto">Automático (recomendado)</option><option value="http">Rápido (descarga directa)</option><option value="browser">Navegador del bot (webs con JavaScript)</option></select></div>
   </details>
   <div class="preview" id="fPrev"></div>
@@ -348,8 +353,10 @@ function spark(pr,W=104,H=34){if(!pr||pr.length<2)return'<div class="spark" styl
   const col=v[v.length-1]<v[0]?'var(--ok)':v[v.length-1]>v[0]?'var(--err)':'var(--acc)';
   return `<svg class="spark" width="${W}" height="${H}"><polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${last[0]}" cy="${last[1]}" r="2.6" fill="${col}"/></svg>`}
 
+let lastTag=null;
 async function load(){
-  S=await api('/api/state');render();
+  const r=await fetch('/api/state');if(!r.ok)throw new Error('Error '+r.status);const tag=r.headers.get('ETag');
+  if(tag&&tag===lastTag&&S)return;lastTag=tag;S=await r.json();render();
   if(S.unseen&&!document.hidden&&(tab==='hist'||tab==='webs')){api('/api/seen',{}).catch(()=>{})}
 }
 function render(){renderSide();renderWebs();renderHist();renderSettings();if(openId)renderDrawer()}
@@ -402,7 +409,7 @@ function renderHist(){
   const q=$('#hq').value.trim().toLowerCase();
   const H=S.history.filter(h=>(hFilter==='all'||h.status===hFilter)&&(!sel.value||h.id===sel.value)&&(!q||(h.name+' '+(h.detail||'')+' '+(h.note||'')+' '+(h.value||'')).toLowerCase().includes(q)));
   $('#hist').innerHTML=H.length?H.slice(0,300).map(h=>`<tr><td style="white-space:nowrap" class="sub">${esc(h.t)}</td><td>${esc(h.name)}</td><td><span class="tag ${h.status}">${h.status==='ALERTA'?'Alerta':h.status==='ERROR'?'Error':'OK'}</span></td>
-    <td class="v">${h.status==='ALERTA'?'<b>'+esc(h.detail)+'</b>':esc(h.note)}${h.value?`<div class="sub" style="white-space:normal">${esc(String(h.value).slice(0,160))}</div>`:''}</td></tr>`).join(''):'<tr><td colspan="4"><div class="empty" style="border:0">Nada que mostrar todavía</div></td></tr>';
+    <td class="v">${h.status==='ALERTA'?'<b>'+esc(h.detail)+'</b>':esc(h.note)}${h.shot?` <a href="#" data-shot="${esc(h.shot)}">📷 captura</a>`:''}${h.value?`<div class="sub" style="white-space:normal">${esc(String(h.value).slice(0,160))}</div>`:''}</td></tr>`).join(''):'<tr><td colspan="4"><div class="empty" style="border:0">Nada que mostrar todavía</div></td></tr>';
 }
 
 let filled=false;
@@ -411,21 +418,24 @@ function renderSettings(force){
   $('#tickMin').textContent=S.tick_minutes;
   $('#autoInfo').textContent=!sc.supported?'Solo en macOS por ahora; en Linux usa «Revisar ahora»':(!sc.installed?'No instalada: actívala aquí':(c.paused?'En pausa':'Activa'));
   $('#loginRow').classList.toggle('hide',!sc.supported||!sc.app);
-  $('#csvPath').textContent=c.csv_full_path;$('#xlsPath').textContent=c.excel_full_path;$('#dataDir').textContent=S.data_dir;
+  $('#csvPath').textContent=c.csv_full_path;$('#dataDir').textContent=S.data_dir;
   $('#pwState').textContent=S.playwright?'✅ Listo':'⚠️ No instalado (cierra y vuelve a abrir WebWatch)';
   $('#about').textContent=`WebWatch ${S.version} · Funciona sin IA, todo en tu Mac`;
   if(filled&&!force)return;filled=true;
   $('#sAuto').checked=!c.paused&&(!sc.supported||sc.installed);$('#sHours').value=String(c.interval_hours);if(!$('#sHours').value)$('#sHours').value='4';
-  $('#sLogin').checked=sc.login_item;$('#sDesk').checked=c.notify_desktop!==false;$('#sTg').checked=c.telegram.enabled;
-  $('#sTok').value=c.telegram.token;$('#sChat').value=c.telegram.chat_id;$('#sCsv').checked=c.csv.enabled!==false;$('#sXls').checked=c.excel.enabled!==false;$('#sDelim').value=c.csv.delimiter||';';
+  $('#sLogin').value=sc.login_mode||'off';$('#sDesk').checked=c.notify_desktop!==false;const q=c.quiet||{};$('#sQuiet').checked=!!q.enabled;$('#sQFrom').value=q.from||'23:00';$('#sQTo').value=q.to||'08:00';$('#sTg').checked=c.telegram.enabled;
+  $('#sTok').value=c.telegram.token;$('#sChat').value=c.telegram.chat_id;$('#sCsv').checked=c.csv.enabled!==false;$('#sDelim').value=c.csv.delimiter||';';
 }
 function collect(){return{interval_hours:$('#sHours').value,notify_desktop:$('#sDesk').checked,
   telegram:{enabled:$('#sTg').checked,token:$('#sTok').value,chat_id:$('#sChat').value},
-  csv:{enabled:$('#sCsv').checked,delimiter:$('#sDelim').value},excel:{enabled:$('#sXls').checked}}}
+  csv:{enabled:$('#sCsv').checked,delimiter:$('#sDelim').value},
+  quiet:{enabled:$('#sQuiet').checked,from:$('#sQFrom').value||'23:00',to:$('#sQTo').value||'08:00'}}}
 async function saveSettings(silent){try{await api('/api/settings',collect());$('#saved').textContent='✓ Guardado';setTimeout(()=>$('#saved').textContent='',1600);S=await api('/api/state');render()}catch(e){toast(e.message,true)}}
-['#sHours','#sDesk','#sTg','#sTok','#sChat','#sCsv','#sXls','#sDelim'].forEach(s=>$(s).addEventListener('change',()=>saveSettings()));
+['#sHours','#sDesk','#sTg','#sTok','#sChat','#sCsv','#sDelim','#sQuiet','#sQFrom','#sQTo'].forEach(s=>$(s).addEventListener('change',()=>saveSettings()));
 $('#sAuto').onchange=async e=>{try{await api('/api/auto',{on:e.target.checked});toast(e.target.checked?'Revisión automática activada':'Revisión automática en pausa');load()}catch(x){toast(x.message,true);e.target.checked=!e.target.checked}};
-$('#sLogin').onchange=async e=>{try{await api('/api/login-item',{on:e.target.checked});toast(e.target.checked?'Se abrirá en la barra de menús al iniciar sesión':'Ya no se abrirá al iniciar sesión')}catch(x){toast(x.message,true);e.target.checked=!e.target.checked}};
+$('#sLogin').onchange=async e=>{const m=e.target.value;try{await api('/api/login-item',{mode:m});toast(m==='window'?'Al encender el Mac se abrirá la ventana':m==='menubar'?'Al encender el Mac aparecerá el icono 👁':'Ya no se abrirá al encender el Mac')}catch(x){toast(x.message,true)}};
+$('#xExport').onclick=e=>busy(e.currentTarget,()=>api('/api/export',{}),r=>'Guardado en Descargas: '+r.path.split('/').pop());
+$('#xImport').onclick=e=>busy(e.currentTarget,async()=>{const r=await api('/api/import',{});await load();return r},r=>r.cancelled?'Importación cancelada':`Importadas ${r.added} de ${r.total} (las repetidas se saltan)`);
 $('#nTest').onclick=e=>busy(e.currentTarget,()=>api('/api/notify/test',{}),'Enviada. Si no aparece: Ajustes del Sistema → Notificaciones');
 $('#tgDetect').onclick=e=>busy(e.currentTarget,async()=>{await saveSettings(true);const r=await api('/api/telegram/detect',{});filled=false;await load();return r},r=>'Conectado con '+r.name);
 $('#tgTest').onclick=e=>busy(e.currentTarget,async()=>{await saveSettings(true);await api('/api/telegram/test',{})},'Mensaje enviado: mira Telegram');
@@ -490,7 +500,7 @@ async function act(a,id,btn){const w=S.watches.find(x=>x.id===id);closePop();
   if(a==='bot'){await api('/api/browser',{url:w.url}).catch(e=>toast(e.message,true));return toast('Abriendo el navegador del bot… ciérralo al terminar')}
   if(a==='toggle'){await api('/api/watch/toggle',{id});return load()}
   if(a==='reset'){if(!await ask('¿Empezar de cero?',`La próxima lectura de «${w.name}» será la nueva referencia (no avisará). El historial se conserva.`,'Reiniciar'))return;await api('/api/watch/reset',{id});toast('Referencia reiniciada');return load()}
-  if(a==='del'){if(!await ask('¿Borrar esta web?',`Dejarás de vigilar «${w.name}». Lo ya registrado en el CSV y el Excel se conserva.`,'Borrar'))return;await api('/api/watch/delete',{id});closeDrawer();toast('Borrada');return load()}}
+  if(a==='del'){if(!await ask('¿Borrar esta web?',`Dejarás de vigilar «${w.name}». Lo ya registrado en el CSV se conserva.`,'Borrar'))return;await api('/api/watch/delete',{id});closeDrawer();toast('Borrada');return load()}}
 function menuHtml(w){const off=w.enabled===false;return `<button data-act="run">↻ Revisar ahora</button><button data-act="edit">✎ Editar…</button><button data-act="web">↗ Abrir la web</button>
   ${w.store||w.render==='browser'?'<button data-act="bot">🧩 Abrir en el navegador del bot</button>':''}<hr><button data-act="toggle">${off?'▶ Reanudar':'⏸ Pausar'}</button><button data-act="reset">⟲ Reiniciar referencia</button><hr><button data-act="del" style="color:var(--err)">🗑 Borrar</button>`}
 function openPop(id,anchor){const p=$('#pop'),w=S.watches.find(x=>x.id===id);p.innerHTML=menuHtml(w);p.dataset.id=id;p.classList.add('on');
@@ -505,6 +515,7 @@ document.addEventListener('click',e=>{
   if(el=t.closest('[data-menu]')){e.stopPropagation();return openPop(el.dataset.menu,el)}
   if(el=t.closest('[data-d-act]'))return act(el.dataset.dAct,openId,el);
   if(el=t.closest('[data-open-w]'))return openDrawer(el.dataset.openW);
+  if(el=t.closest('[data-shot]')){e.preventDefault();return api('/api/open',{what:'shot',name:el.dataset.shot}).catch(x=>toast(x.message,true))}
   if(el=t.closest('[data-open]'))return api('/api/open',{what:el.dataset.open}).catch(x=>toast(x.message,true));
   if(el=t.closest('[data-bot]')){api('/api/browser',{url:el.dataset.bot}).then(()=>toast('Abriendo el navegador del bot… ciérralo al terminar')).catch(x=>toast(x.message,true));return}
   if(el=t.closest('[data-go]'))return gotoTab(el.dataset.go);
@@ -548,6 +559,8 @@ const ftype=()=>($('input[name=ftype]:checked')||{}).value||'change';
 function syncDlg(){const t=ftype(),st=storeOf($('#fUrl').value);
   $('#g-product').classList.toggle('hide',t!=='product');$('#g-keyword').classList.toggle('hide',t!=='keyword');$('#g-ignore').classList.toggle('hide',t!=='change');
   $('#selLbl').textContent=t==='product'?'Selector CSS del precio (solo si no lo encuentra solo)':'Zona de la página (selector CSS)';
+  [...$('#fInt').options].forEach(o=>{o.disabled=!!st&&o.value!==''&&+o.value<2});  // tiendas: mínimo 2 h
+  if(st&&$('#fInt').value&&+$('#fInt').value<2)$('#fInt').value='2';
   const s=$('#fStore');s.classList.toggle('on',!!st);if(st)s.querySelector('span').textContent=`${st==='amazon'?'Amazon':'AliExpress'} detectado: encuentro el precio, el título y el stock automáticamente.`}
 $$('input[name=ftype]').forEach(r=>r.onchange=syncDlg);
 $('#fUrl').addEventListener('input',()=>{if(storeOf($('#fUrl').value)){const r=$('input[name=ftype][value=product]');if(!r.checked){r.checked=true}}syncDlg()});
@@ -557,12 +570,19 @@ function openDlg(id){editing=id||null;const w=id?S.watches.find(x=>x.id===id):{t
   $('#fInt').value=w.interval?String(w.interval):'';$('#fBelow').value=w.below??'';$('#fDrop').value=w.drop_percent??'';
   $('#fMin').checked=!!w.notify_min;$('#fStock').checked=w.notify_stock!==false;$('#fAny').checked=!!w.any_change;
   $('#fApp').value=(w.appears||[]).join(', ');$('#fDis').value=(w.disappears||[]).join(', ');
-  $('#fSel').value=w.selector||'';$('#fIgn').value=(w.ignore||[]).join('\n');$('#fRender').value=w.render||'auto';
-  $('#fAdv').open=!!(w.selector||(w.ignore||[]).length||(w.render&&w.render!=='auto'));
+  $('#fSel').value=w.selector||'';$('#fShot').checked=!!w.screenshot;$('#fIgn').value=(w.ignore||[]).join('\n');$('#fRender').value=w.render||'auto';
+  $('#fAdv').open=!!(w.selector||w.screenshot||(w.ignore||[]).length||(w.render&&w.render!=='auto'));
   $('#fPrev').className='preview';syncDlg();closeDrawer();$('#dlg').showModal();if(!id)$('#fUrl').focus()}
 function formData(){const o=S.watches.find(x=>x.id===editing)||{};return{id:editing,enabled:o.enabled!==false,url:$('#fUrl').value.trim(),name:$('#fName').value,type:ftype(),interval:$('#fInt').value,
   below:$('#fBelow').value,drop_percent:$('#fDrop').value,notify_min:$('#fMin').checked,notify_stock:$('#fStock').checked,any_change:$('#fAny').checked,
-  appears:$('#fApp').value,disappears:$('#fDis').value,selector:$('#fSel').value,ignore:$('#fIgn').value,render:$('#fRender').value}}
+  appears:$('#fApp').value,disappears:$('#fDis').value,selector:$('#fSel').value,ignore:$('#fIgn').value,render:$('#fRender').value,screenshot:$('#fShot').checked}}
+let pickT=null;
+$('#fPick').onclick=async()=>{const url=$('#fUrl').value.trim();if(!/^https?:\/\//.test(url))return toast('Pega primero la dirección de la página',true);
+  try{await api('/api/browser',{url,pick:ftype()})}catch(x){return toast(x.message,true)}
+  toast('Se abre la página: haz clic en '+(ftype()==='product'?'el precio':'la zona que quieres vigilar'));
+  clearInterval(pickT);const t0=Date.now();pickT=setInterval(async()=>{if(!$('#dlg').open||Date.now()-t0>600000)return clearInterval(pickT);
+    const r=await api('/api/pick').catch(()=>({}));if(r.selector&&r.url===url){clearInterval(pickT);$('#fSel').value=r.selector;$('#fAdv').open=true;
+      api('/api/pick/clear',{}).catch(()=>{});toast('🎯 Elegido'+(r.price!=null?': '+money(r.price):'')+'. Pulsa «Probar lectura» y Guardar')}},1000)};
 $('#add').onclick=()=>openDlg();$('#fCancel').onclick=()=>$('#dlg').close();
 $('#fTest').onclick=async e=>{const P=$('#fPrev'),b=e.currentTarget;P.className='preview on';P.innerHTML='<span class="spin"></span> Leyendo la página… (las tiendas pueden tardar 10-20 s)';b.disabled=true;
   try{const r=await api('/api/test',formData());if(r.title&&!$('#fName').value)$('#fName').value=r.title.slice(0,60);

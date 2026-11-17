@@ -1,4 +1,4 @@
-# 👁 WebWatch 2.3 para Mac
+# 👁 WebWatch 2.4 para Mac
 
 Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, ofertas en Amazon o AliExpress, stock... Funciona **sin IA**: solo aplica las reglas que tú le pones. Todo se queda en tu Mac.
 
@@ -9,7 +9,7 @@ Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, 
    ```
    bash ~/Downloads/WebWatch/crear-dmg.sh
    ```
-   Se crea `WebWatch-2.3.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
+   Se crea `WebWatch-2.4.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
 2. Abre el `.dmg` y **arrastra WebWatch a Aplicaciones**.
 3. Abre WebWatch desde Aplicaciones o Launchpad. La primera vez te saluda y se prepara sola (1-3 min). Cuando acaba, te avisa con una notificación.
 
@@ -24,7 +24,7 @@ Si abres la app desde el .dmg o desde Descargas, te ofrece copiarse ella sola a 
 ## Dónde verlo
 
 - **Ventana:** muestra tus webs con su estado. En los productos verás el precio, la variación y un gráfico. Haz clic en una web para ver el detalle y su historial.
-- **Barra de menús (👁):** muestra las últimas alertas (clic para abrir la web), un botón para revisar ahora, otro para pausar y accesos al CSV y al Excel. Si cierras la ventana, la app sigue aquí.
+- **Barra de menús (👁):** muestra las últimas alertas (clic para abrir la web), un botón para revisar ahora, otro para pausar y acceso al CSV. Mientras revisa, enseña qué está haciendo. Si cierras la ventana, la app sigue aquí.
 - **Dock:** muestra un número rojo con las alertas sin ver. Con clic derecho tienes «Revisar ahora» y «Añadir web».
 - **Menús de arriba:** Archivo (⌘N añadir, ⌘R revisar), Visualización (⌘1, ⌘2, ⌘3), Ajustes (⌘,) y los demás menús habituales de un Mac.
 
@@ -40,6 +40,9 @@ Pega el enlace y pulsa **Probar lectura** para ver qué lee el bot antes de guar
 
 ## Cuándo revisa
 
+Al encender el Mac, WebWatch puede abrir la ventana, quedarse solo en la barra de menús o no abrirse (Ajustes → Al encender el Mac).
+
+
 Cada 10 minutos, macOS lanza WebWatch y este revisa solo las webs a las que les toca, según su frecuencia (la general o la de cada web). Las revisiones que se perdieron se hacen así:
 
 - **Mac dormido:** al despertar.
@@ -51,10 +54,12 @@ Con el Mac dormido no puede revisar.
 
 ## Avisos y registros
 
-- **Notificación del Mac.** Si quieres que al pulsarla se abra la web, instala `brew install terminal-notifier`.
-- **Telegram.** Los pasos están dentro de Ajustes.
-- **CSV.** `observaciones.csv` guarda una fila por cada observación (fecha, web, estado, valor, precio, stock, título, detalle). Usa el separador `;` para que el Excel en español lo abra bien; lo puedes cambiar en Ajustes.
-- **Excel.** `webwatch_log.xlsx` tiene dos hojas: «Revisiones» y «Alertas».
+- **Notificación del Mac.** Al pulsarla se abre la web. La primera vez macOS te pide permiso para WebWatch.
+- **Horas de silencio.** En Ajustes eliges un horario sin notificaciones; en Telegram llegan sin sonar.
+- **Captura.** En las opciones avanzadas de cada web puedes pedir una captura de la página cuando avise (se guarda en `capturas/` y se manda por Telegram).
+- **Telegram.** Los pasos están dentro de Ajustes. Además puedes escribirle al bot: `/estado`, `/revisar` (o `/revisar 2`), `/objetivo 2 49,99` y `/pausa`. El token se guarda en el Llavero del Mac.
+- **CSV.** `observaciones.csv` guarda una fila por cada observación (fecha, web, estado, valor, precio, stock, título, detalle). Usa el separador `;` para que las hojas de cálculo en español lo abran bien; lo puedes cambiar en Ajustes.
+- **Copia de tus webs.** Ajustes → Exportar guarda la lista en Descargas; Importar la carga en otro Mac.
 
 Todo está en `~/Library/Application Support/WebWatch/`. Para abrir esa carpeta: Ajustes → Abrir carpeta.
 
@@ -68,8 +73,8 @@ Todo está en `~/Library/Application Support/WebWatch/`. Para abrir esa carpeta:
 ## Problemas frecuentes
 
 - **«No se puede abrir porque es de un desarrollador no identificado»:** ejecuta `bash ~/Downloads/WebWatch/firmar.sh` (paso 2 de la instalación).
-- **No veo notificaciones:** ve a Ajustes del Sistema → Notificaciones y activa «Editor de Scripts» (o terminal-notifier).
-- **«No encuentro el precio»:** en Opciones avanzadas, indica el selector CSS del precio. Para sacarlo: clic derecho sobre el precio → Inspeccionar → Copy selector.
+- **No veo notificaciones:** ve a Ajustes del Sistema → Notificaciones y activa «WebWatch».
+- **«No encuentro el precio»:** en Opciones avanzadas pulsa **🎯 Elegir en la página**: se abre la página y haces clic en el precio.
 - **Una web carga en blanco:** en Opciones avanzadas, cambia «Cómo leer la página» a «Navegador del bot».
 - **Registro técnico:** menú Ayuda → Ver registro técnico.
 

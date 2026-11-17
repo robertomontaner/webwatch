@@ -23,12 +23,22 @@ fail(){
   exit 1
 }
 
-# 1) Python
+# 1) Python: el más nuevo (3.11+) que haya; el 3.9 de Apple solo como último recurso (viejo, sin soporte
+#    y con LibreSSL). Tiene que ser un Python «framework» (Homebrew o python.org) para el icono propio.
 PY=""
-for c in /opt/homebrew/bin/python3 /usr/local/bin/python3 \
-         /Library/Frameworks/Python.framework/Versions/Current/bin/python3 /usr/bin/python3; do
-  if [ -x "$c" ] && "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3,9) else 1)' >/dev/null 2>&1; then PY="$c"; break; fi
-done
+pick_py(){ # pick_py versión_mínima candidatos...
+  local min="$1"; shift
+  for c in "$@"; do
+    [ -x "$c" ] || continue
+    "$c" -c "import sys; sys.exit(0 if sys.version_info >= ($min) else 1)" >/dev/null 2>&1 && { echo "$c"; return 0; }
+  done
+  return 1
+}
+CANDS=(/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3
+       /usr/local/bin/python3.13 /usr/local/bin/python3.12 /usr/local/bin/python3.11 /usr/local/bin/python3
+       /Library/Frameworks/Python.framework/Versions/3.13/bin/python3 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3
+       /Library/Frameworks/Python.framework/Versions/Current/bin/python3)
+PY="$(pick_py "3,11" "${CANDS[@]}")" || PY="$(pick_py "3,9" "${CANDS[@]}" /usr/bin/python3)" || PY=""
 if [ -z "$PY" ]; then
   if [ "$(dialog "WebWatch necesita las «Herramientas de línea de comandos» de Apple (gratis, unos minutos).\n\nPulsa Instalar, espera a que terminen y vuelve a abrir WebWatch." "Instalar" "Cancelar")" = "Instalar" ]; then
     xcode-select --install >/dev/null 2>&1
@@ -47,8 +57,16 @@ pkill -f "WebWatch/app/webwatch.py serve" 2>/dev/null
 rm -rf "$CODE.new" && cp -R "$RES/app" "$CODE.new" && rm -rf "$CODE" && mv "$CODE.new" "$CODE" \
   || fail "No pude copiar los archivos del programa."
 
-# 3) Librerías
-if [ -e "$VENV/bin/python" ] && ! "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1; then rm -rf "$VENV"; FIRST=1; fi
+# 3) Librerías (si el venv está roto o se hizo con otro Python, se rehace; tus datos no se tocan)
+if [ -e "$VENV/bin/python" ] && ! "$VENV/bin/python" -c 'import sys' >/dev/null 2>&1; then rm -rf "$VENV"; fi
+if [ -x "$VENV/bin/python" ]; then
+  WANT="$("$PY" -c 'import sys; print(sys.base_prefix)')"; HAVE="$("$VENV/bin/python" -c 'import sys; print(sys.base_prefix)')"
+  if [ "$WANT" != "$HAVE" ]; then
+    say "Actualizando a Python $("$PY" -c 'import platform; print(platform.python_version())')… (1-2 min)"
+    echo "· venv: $HAVE -> $WANT" >>"$LOG"
+    rm -rf "$VENV"
+  fi
+fi
 [ -x "$VENV/bin/python" ] || "$PY" -m venv "$VENV" >>"$LOG" 2>&1 || fail "No pude crear el entorno de Python."
 [ $FIRST = 1 ] && say "Descargando componentes…"
 "$VENV/bin/python" -m pip install -q --upgrade pip >>"$LOG" 2>&1
@@ -95,12 +113,14 @@ build_runtime(){
   rm -rf "$SUP/runtime" && mkdir -p "$RT/Contents/MacOS" "$RT/Contents/Resources" || return 1
   X="$RT/Contents/MacOS/webwatch-python"
   cp "$STUB" "$X" || return 1
-  # El stub enlaza el framework con una ruta relativa a su sitio original: la hacemos absoluta.
-  REL="$(otool -L "$STUB" | awk '/@executable_path/ {print $1; exit}')"
+  # El stub enlaza el framework con una ruta relativa (Apple) o con la de la versión concreta (Homebrew:
+  # .../Cellar/python@3.12/3.12.14/...). La cambiamos por la ruta estable del framework ($BASE/Python):
+  # sobrevive a «brew upgrade».
+  REL="$(otool -L "$STUB" | awk 'NR>1 && /Python.framework|Python3.framework/ {print $1; exit}')"
   if [ -n "$REL" ]; then
-    LIB="$(cd "$(dirname "$STUB")" && cd "$(dirname "${REL#@executable_path/}")" && pwd)/$(basename "$REL")"
+    LIB="$BASE/$(basename "$REL")"
     [ -e "$LIB" ] || return 1
-    install_name_tool -change "$REL" "$LIB" "$X" 2>/dev/null || return 1
+    [ "$REL" = "$LIB" ] || install_name_tool -change "$REL" "$LIB" "$X" 2>/dev/null || return 1
   fi
   codesign -f -s - "$X" >/dev/null 2>&1 || return 1
   cp "$RES/icon.icns" "$RT/Contents/Resources/icon.icns" 2>/dev/null

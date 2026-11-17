@@ -36,8 +36,11 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font, PatternFill
+try:
+    import lxml  # noqa: F401  (5-10x más rápido leyendo HTML)
+    PARSER = "lxml"
+except ImportError:
+    PARSER = "html.parser"
 
 VERSION = (Path(__file__).resolve().parent / "VERSION").read_text().strip() if (Path(__file__).resolve().parent / "VERSION").exists() else "2.1"
 BASE = Path(__file__).resolve().parent
@@ -50,6 +53,10 @@ LOG_PATH = DATA / "webwatch.log"
 PROFILE_DIR = DATA / "browser-profile"
 RUN_LOCK = DATA / ".run.lock"
 PROGRESS_PATH = DATA / "progress.json"
+NOTIFY_QUEUE = DATA / "notify-queue.jsonl"
+APP_LOCK = DATA / ".app.lock"
+SHOTS_DIR = DATA / "capturas"
+PICK_PATH = DATA / "pick.json"
 BROWSER_LOCK = DATA / ".browser.lock"
 BOT_PID = DATA / ".bot-browser.pid"
 APP_PATH_FILE = DATA / "app_path.txt"
@@ -92,7 +99,7 @@ DEFAULT_CONFIG = {
     "defaults": {"timeout": 30, "pause_seconds": 3, "alert_after_errors": 3},
     "notify_desktop": True,
     "telegram": {"enabled": False, "token": "", "chat_id": ""},
-    "excel": {"enabled": True, "path": "webwatch_log.xlsx"},
+    "quiet": {"enabled": False, "from": "23:00", "to": "08:00"},
     "csv": {"enabled": True, "path": "observaciones.csv", "delimiter": ";"},
     "watches": [
         {"id": "obra0001", "name": "Obra piso Greenquart", "url": "https://greenquart.com/estado-obra.php",
@@ -134,6 +141,14 @@ def load_config():
         save_json(CONFIG_PATH, DEFAULT_CONFIG)
     cfg = load_json(CONFIG_PATH, None) or _copy(DEFAULT_CONFIG)
     _merge(cfg, DEFAULT_CONFIG)
+    dirty = cfg.pop("excel", None) is not None
+    tok = cfg["telegram"].get("token", "")
+    if IS_MAC and tok and keychain_set(tok):  # el token ya no se guarda en texto plano
+        cfg["telegram"]["token"] = ""
+        cfg["telegram"]["keychain"] = True
+        dirty = True
+    if dirty:
+        save_json(CONFIG_PATH, cfg)
     for w in cfg["watches"]:
         if w.get("type") == "price":  # versión 1
             w["type"] = "product"
@@ -141,6 +156,41 @@ def load_config():
         if w["render"] == "http" and store_of(w.get("url", "")):
             w["render"] = "auto"
     return cfg
+
+
+KC_SERVICE, KC_ACCOUNT = "WebWatch", "telegram-bot-token"
+
+
+def keychain_set(secret):
+    if not IS_MAC:
+        return False
+    _KC["t"] = 0
+    if not secret:
+        subprocess.run(["security", "delete-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT],
+                       capture_output=True)
+        return True
+    r = subprocess.run(["security", "add-generic-password", "-U", "-s", KC_SERVICE, "-a", KC_ACCOUNT,
+                        "-l", "WebWatch · bot de Telegram", "-w", secret], capture_output=True)
+    return r.returncode == 0
+
+
+_KC = {"t": 0, "v": ""}
+
+
+def keychain_get():
+    if not IS_MAC:
+        return ""
+    if time.time() - _KC["t"] < 60:
+        return _KC["v"]
+    r = subprocess.run(["security", "find-generic-password", "-s", KC_SERVICE, "-a", KC_ACCOUNT, "-w"],
+                       capture_output=True, text=True)
+    _KC.update(t=time.time(), v=r.stdout.strip() if r.returncode == 0 else "")
+    return _KC["v"]
+
+
+def tg_token(cfg):
+    tg = cfg.get("telegram", {})
+    return tg.get("token") or (keychain_get() if tg.get("keychain") else "")
 
 
 def save_config(cfg):
@@ -168,10 +218,6 @@ def data_path(p, default):
     return p if p.is_absolute() else DATA / p
 
 
-def excel_path(cfg):
-    return data_path(cfg["excel"].get("path"), "webwatch_log.xlsx")
-
-
 def csv_path(cfg):
     return data_path(cfg["csv"].get("path"), "observaciones.csv")
 
@@ -191,6 +237,15 @@ def online():
 
 
 STORE_MIN_HOURS = 2  # Amazon/AliExpress: más a menudo dispara captchas a diario
+
+
+def in_quiet(cfg, at=None):
+    q = cfg.get("quiet") or {}
+    if not q.get("enabled"):
+        return False
+    cur = (at or datetime.now()).strftime("%H:%M")
+    a, b = q.get("from", "23:00"), q.get("to", "08:00")
+    return (a <= cur < b) if a <= b else (cur >= a or cur < b)
 
 
 def interval_of(w, cfg):
@@ -357,7 +412,7 @@ def first_price(soup, selectors):
 
 
 def extract_product(html, url="", store=None, selector=""):
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, PARSER)
     info = {"title": None, "price": None, "currency": None, "available": None}
 
     if store == "amazon":
@@ -464,7 +519,7 @@ def extract_product(html, url="", store=None, selector=""):
 
 
 def extract_text(html, selector, ignore):
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, PARSER)
     for t in soup(["script", "style", "noscript", "svg"]):
         t.decompose()
     if selector:
@@ -581,6 +636,30 @@ class Fetcher:
         self.timeout = defaults.get("timeout", 30)
         self.s = requests.Session()
         self._pw = self._ctx = self._lock = None
+        self.pre = {}  # id -> html | Exception (descargas hechas en paralelo)
+
+    @staticmethod
+    def wants_browser(watch):
+        mode, store = watch.get("render") or "auto", store_of(watch["url"])
+        return mode == "browser" or (mode == "auto" and store == "aliexpress" and has_playwright())
+
+    def prefetch(self, watches, workers=4):
+        """Descarga a la vez las webs que se leen por HTTP; las del navegador van luego en fila."""
+        todo = [w for w in watches if not self.wants_browser(w)]
+        if len(todo) < 2:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        step(f"Descargando {len(todo)} webs a la vez…")
+
+        def one(w):
+            f = Fetcher({"timeout": self.timeout})
+            try:
+                return w["id"], f.http(w["url"], store_of(w["url"]))
+            except Exception as e:  # noqa: BLE001
+                return w["id"], e
+
+        with ThreadPoolExecutor(max_workers=min(workers, len(todo))) as ex:
+            self.pre.update(dict(ex.map(one, todo)))
 
     def http(self, url, store):
         step("Descargando la página…")
@@ -644,10 +723,13 @@ class Fetcher:
     def get(self, watch):
         url, store = watch["url"], store_of(watch["url"])
         mode = watch.get("render") or "auto"
-        use_browser = mode == "browser" or (mode == "auto" and store == "aliexpress" and has_playwright())
+        use_browser = self.wants_browser(watch)
         if not use_browser:
             try:
-                html = self.http(url, store)
+                pre = self.pre.pop(watch["id"], None)
+                if isinstance(pre, Exception):
+                    raise pre
+                html = pre if pre is not None else self.http(url, store)
                 detect_block(html, store)
                 return html, "http"
             except Blocked:
@@ -656,6 +738,29 @@ class Fetcher:
         html = self.browser(url, store)
         detect_block(html, store)
         return html, "navegador"
+
+    def screenshot(self, url, name):
+        """Captura de la página (solo cuando hay alerta y la web lo tiene activado)."""
+        SHOTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = SHOTS_DIR / f"{name}-{datetime.now():%Y%m%d-%H%M%S}.png"
+        page = self._context().new_page()
+        try:
+            step("Haciendo captura de la página…")
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            except Exception as e:  # noqa: BLE001
+                if type(e).__name__ != "TimeoutError":
+                    raise
+            page.wait_for_timeout(2500)
+            page.screenshot(path=str(path), full_page=False)
+        finally:
+            try:
+                page.close()
+            except Exception:  # noqa: BLE001
+                pass
+        for old in sorted(SHOTS_DIR.glob(f"{name}-*.png"))[:-20]:  # guarda las 20 últimas por web
+            old.unlink(missing_ok=True)
+        return path
 
     def close(self):
         for fn in (lambda: self._ctx and self._ctx.close(), lambda: self._pw and self._pw.stop()):
@@ -762,7 +867,32 @@ def check(watch, prev, fetcher):
 
 
 # ================================================================ avisos y registros
-def notify_desktop(title, message, url=None):
+def app_running():
+    """¿Está abierta la app (ventana o barra de menús)? Tiene el candado .app.lock."""
+    try:
+        with open(APP_LOCK, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(f, fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return True
+
+
+def notify_desktop(title, message, url=None, force=False):
+    if not force and in_quiet(load_config()):
+        print(f"[silencio] {title}: {message}", flush=True)
+        return
+    if IS_MAC and app_running():  # la app las enseña como notificaciones nativas (clic = abre la web)
+        try:
+            with open(NOTIFY_QUEUE, "a") as f:
+                f.write(json.dumps({"title": title, "message": message[:300], "url": url}, ensure_ascii=False) + "\n")
+            return
+        except OSError:
+            pass
+    notify_legacy(title, message, url)
+
+
+def notify_legacy(title, message, url=None):
     try:
         if IS_MAC:
             tn = shutil.which("terminal-notifier") or next(
@@ -782,13 +912,21 @@ def notify_desktop(title, message, url=None):
         print(f"[notificación] {title}: {message}")
 
 
-def telegram_send(cfg, text):
-    tg = cfg.get("telegram", {})
-    if not tg.get("token") or not tg.get("chat_id"):
+def telegram_send(cfg, text, photo=None, silent=False):
+    tg, tok = cfg.get("telegram", {}), tg_token(cfg)
+    if not tok or not tg.get("chat_id"):
         raise RuntimeError("Falta el token o el chat ID de Telegram")
-    r = requests.post(f"https://api.telegram.org/bot{tg['token']}/sendMessage",
-                      data={"chat_id": tg["chat_id"], "text": text[:4000], "disable_web_page_preview": "true"},
-                      timeout=20)
+    data = {"chat_id": tg["chat_id"], "text": text[:4000], "disable_web_page_preview": "true"}
+    if silent or in_quiet(cfg):
+        data["disable_notification"] = "true"  # horas de silencio: llega sin sonar
+    if photo and Path(photo).exists():
+        with open(photo, "rb") as f:
+            r = requests.post(f"https://api.telegram.org/bot{tok}/sendPhoto", timeout=40,
+                              data={"chat_id": tg["chat_id"], "caption": text[:1000],
+                                    "disable_notification": data.get("disable_notification", "false")},
+                              files={"photo": f})
+    else:
+        r = requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", data=data, timeout=20)
     if not r.ok:
         try:
             desc = r.json().get("description", r.text)
@@ -797,54 +935,12 @@ def telegram_send(cfg, text):
         raise RuntimeError(f"Telegram: {desc[:150]}")
 
 
-def notify_telegram(cfg, text):
+def notify_telegram(cfg, text, photo=None):
     if cfg.get("telegram", {}).get("enabled"):
         try:
-            telegram_send(cfg, text)
+            telegram_send(cfg, text, photo=photo)
         except Exception as e:  # noqa: BLE001
             print("Telegram error:", e)
-
-
-XLS_MAIN = ["Fecha", "Web", "Tipo", "Estado", "Valor", "Precio", "Disponible", "Nota", "URL"]
-XLS_ALERT = ["Fecha", "Web", "Motivo", "Detalle", "URL"]
-
-
-def ensure_excel(cfg):
-    path = excel_path(cfg)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        return path
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Revisiones"
-    ev = wb.create_sheet("Alertas")
-    fill = PatternFill("solid", fgColor="E8F0FE")
-    for sheet, head, widths in ((ws, XLS_MAIN, (19, 28, 10, 9, 46, 11, 11, 28, 50)),
-                                (ev, XLS_ALERT, (19, 28, 18, 80, 50))):
-        sheet.append(head)
-        for c in sheet[1]:
-            c.font, c.fill = Font(bold=True), fill
-        sheet.freeze_panes = "A2"
-        for i, w in enumerate(widths):
-            sheet.column_dimensions[chr(65 + i)].width = w
-    wb.save(path)
-    return path
-
-
-def log_excel(cfg, res):
-    if not cfg["excel"].get("enabled", True):
-        return
-    path = ensure_excel(cfg)
-    wb = load_workbook(path)
-    avail = {True: "sí", False: "no"}.get(res.get("available"), "")
-    wb["Revisiones"].append([res["t"], res["name"], res["type"], res["status"], res.get("value", ""),
-                             res.get("price"), avail, res.get("note", ""), res["url"]])
-    if res["status"] == "ALERTA":
-        wb["Alertas"].append([res["t"], res["name"], res.get("alert_title", ""), res.get("detail", ""), res["url"]])
-    try:
-        wb.save(path)
-    except PermissionError:
-        wb.save(path.with_name(path.stem + "_pendiente.xlsx"))
 
 
 CSV_HEAD = ["fecha", "web", "tipo", "estado", "valor", "precio", "moneda", "disponible", "titulo",
@@ -891,6 +987,7 @@ def run_checks(ids=None):
         results, renamed = [], False
         progress(running=True, started=now(), finished=None, n=len(watches), i=0, name="", url="",
                  step="Preparando…", done=[])
+        fetcher.prefetch(watches)
         for i, w in enumerate(watches):
             progress(i=i + 1, name=w["name"], url=w["url"], step="Empezando…")
             st = state.setdefault(w["id"], {})
@@ -899,6 +996,8 @@ def run_checks(ids=None):
             try:
                 r = check(w, st.get("data", {}), fetcher)
                 st["data"], st["errors"] = r["state"], 0
+                if r.get("price") is not None:
+                    st["prices"] = (st.get("prices") or [])[-499:] + [[res["t"], r["price"]]]
                 st.pop("blocked", None)
                 if w.get("auto_name") and r.get("title"):
                     w["name"] = res["name"] = r["title"][:70]
@@ -910,9 +1009,16 @@ def run_checks(ids=None):
                 if r["alert"]:
                     title, detail = r["alert"]
                     res["detail"], res["alert_title"] = detail, title
+                    shot = None
+                    if w.get("screenshot") and has_playwright():
+                        try:
+                            shot = fetcher.screenshot(w["url"], w["id"])
+                            res["shot"] = shot.name
+                        except Exception as e:  # noqa: BLE001
+                            print("No pude hacer la captura:", e, flush=True)
                     if cfg.get("notify_desktop", True):
                         notify_desktop(f"WebWatch · {title}", f"{w['name']}: {detail}", w["url"])
-                    notify_telegram(cfg, f"🔔 {w['name']}\n{title}\n{detail}\n{w['url']}")
+                    notify_telegram(cfg, f"🔔 {w['name']}\n{title}\n{detail}\n{w['url']}", photo=shot)
             except Exception as e:  # noqa: BLE001
                 st["errors"] = st.get("errors", 0) + 1
                 blocked = isinstance(e, Blocked)
@@ -931,11 +1037,10 @@ def run_checks(ids=None):
                     if cfg.get("notify_desktop", True):
                         notify_desktop("WebWatch · No puedo revisar una web", msg, w["url"])
                     notify_telegram(cfg, f"⚠️ {msg}\n{w['url']}")
-            for logger in (log_excel, log_csv):
-                try:
-                    logger(cfg, res)
-                except Exception as e:  # noqa: BLE001
-                    print(f"No pude escribir el registro ({logger.__name__}): {e}")
+            try:
+                log_csv(cfg, res)
+            except Exception as e:  # noqa: BLE001
+                print(f"No pude escribir el CSV: {e}")
             st["last"] = {k: res.get(k) for k in ("t", "status", "value", "note")}
             if res["status"] != "ERROR":
                 if res["status"] == "ALERTA":
@@ -949,7 +1054,7 @@ def run_checks(ids=None):
             print(f"[{res['t']}] {w['name']}: {res['status']} ({res['note']})", flush=True)
             _PROGRESS.setdefault("done", []).append({"name": w["name"], "status": res["status"],
                                                      "note": res.get("detail") or res.get("note") or ""})
-            if i < len(watches) - 1:
+            if i < len(watches) - 1 and watches[i + 1]["id"] not in fetcher.pre:
                 progress(step="Pausa breve antes de la siguiente web…")
                 time.sleep(defaults.get("pause_seconds", 3))
         if renamed:
@@ -974,6 +1079,122 @@ def due_ids(cfg=None, state=None):
     cfg = cfg or load_config()
     state = state if state is not None else load_json(STATE_PATH, {})
     return [w["id"] for w in cfg["watches"] if w.get("enabled", True) and is_due(w, state.get(w["id"], {}), cfg)]
+
+
+# ================================================================ comandos de Telegram
+TG_STATE = DATA / "telegram.json"
+TG_HELP = ("Comandos de WebWatch:\n/estado · cómo está cada web\n/revisar · revisa todas ahora\n"
+           "/revisar 2 · revisa solo la web nº 2\n/objetivo 2 49,99 · avísame si la nº 2 baja de 49,99 €\n"
+           "/pausa · pausa o reanuda la revisión automática")
+
+
+def _tg_status():
+    cfg, state = load_config(), load_json(STATE_PATH, {})
+    lines = ["👁 WebWatch" + (" · ⏸ en pausa" if cfg.get("paused") else "")]
+    for i, w in enumerate(cfg["watches"], 1):
+        st = state.get(w["id"], {})
+        last = st.get("last") or {}
+        icon = "⏸" if not w.get("enabled", True) else ("🧩" if st.get("blocked") else
+                {"OK": "✅", "ALERTA": "🔔", "ERROR": "⚠️"}.get(last.get("status"), "·"))
+        val = last.get("value") if w.get("type") == "product" else last.get("note")
+        nxt = fmt_ts(ts(last["t"]) + retry_interval(w, st, cfg))[11:16] if last.get("t") else "pronto"
+        lines.append(f"{i}. {icon} {w['name'][:40]} — {str(val or '')[:60]} (próx. {nxt})")
+    return "\n".join(lines)
+
+
+def _tg_handle(cfg, text):
+    parts = text.strip().split()
+    cmd = parts[0].split("@")[0].lower() if parts else ""
+    watches = cfg["watches"]
+
+    def pick_watch(n):
+        try:
+            if int(n) < 1:
+                raise IndexError
+            return watches[int(n) - 1]
+        except (ValueError, IndexError):
+            raise ValueError(f"No hay ninguna web nº {n}. Mira /estado")
+
+    if cmd in ("/start", "/ayuda", "/help"):
+        return TG_HELP
+    if cmd == "/estado":
+        return _tg_status()
+    if cmd == "/revisar":
+        ids = [pick_watch(parts[1])["id"]] if len(parts) > 1 else None
+        try:
+            res = run_checks(ids)
+        except Busy:
+            return "⏳ Ya estoy revisando, en un momento te digo."
+        out = [f"{ {'OK': '✅', 'ALERTA': '🔔', 'ERROR': '⚠️'}.get(r['status'], '·') } {r['name'][:40]} — "
+               f"{(r.get('detail') or r.get('value') or r.get('note') or '')[:80]}" for r in res]
+        return "Revisión hecha:\n" + ("\n".join(out) or "nada que revisar")
+    if cmd == "/objetivo":
+        if len(parts) < 3:
+            return "Uso: /objetivo 2 49,99"
+        w = pick_watch(parts[1])
+        if w.get("type") != "product":
+            return f"«{w['name']}» no vigila un precio"
+        price = parse_price(parts[2])
+        if price is None:
+            return f"«{parts[2]}» no es un precio"
+        fresh = load_config()
+        for x in fresh["watches"]:
+            if x["id"] == w["id"]:
+                x["below"] = price
+        save_config(fresh)
+        return f"🎯 Te aviso si «{w['name'][:40]}» baja de {money(price)}"
+    if cmd == "/pausa":
+        fresh = load_config()
+        fresh["paused"] = not fresh.get("paused")
+        save_config(fresh)
+        return "⏸ Revisión automática en pausa" if fresh["paused"] else "▶️ Revisión automática reanudada"
+    return "No entiendo ese comando.\n\n" + TG_HELP
+
+
+def telegram_loop(stop=None):
+    """Escucha los comandos del bot (long polling). Solo responde al chat configurado."""
+    registered = None
+    while not (stop and stop.is_set()):
+        cfg = load_config()
+        tg, tok = cfg.get("telegram", {}), tg_token(cfg)
+        if not (tg.get("enabled") and tok and tg.get("chat_id")):
+            time.sleep(30)
+            continue
+        base = f"https://api.telegram.org/bot{tok}"
+        if registered != tok:
+            try:
+                requests.post(f"{base}/setMyCommands", timeout=20, json={"commands": [
+                    {"command": "estado", "description": "Cómo está cada web"},
+                    {"command": "revisar", "description": "Revisar ahora (o /revisar 2)"},
+                    {"command": "objetivo", "description": "Precio objetivo: /objetivo 2 49,99"},
+                    {"command": "pausa", "description": "Pausar o reanudar"},
+                    {"command": "ayuda", "description": "Ver los comandos"}]})
+                registered = tok
+            except requests.RequestException:
+                pass
+        off = load_json(TG_STATE, {}).get("offset", 0)
+        try:
+            r = requests.get(f"{base}/getUpdates", params={"offset": off, "timeout": 50,
+                                                           "allowed_updates": '["message"]'}, timeout=65).json()
+        except (requests.RequestException, ValueError):
+            time.sleep(20)
+            continue
+        if not r.get("ok"):
+            time.sleep(60)
+            continue
+        for u in r.get("result", []):
+            save_json(TG_STATE, {"offset": u["update_id"] + 1})
+            m = u.get("message") or {}
+            if str(m.get("chat", {}).get("id")) != str(tg["chat_id"]) or not m.get("text", "").startswith("/"):
+                continue
+            try:
+                reply = _tg_handle(cfg, m["text"])
+            except Exception as e:  # noqa: BLE001
+                reply = f"⚠️ {e}"
+            try:
+                telegram_send(load_config(), reply, silent=True)
+            except Exception as e:  # noqa: BLE001
+                print("Telegram (respuesta):", e, flush=True)
 
 
 # ================================================================ arranque automático (launchd)
@@ -1037,22 +1258,37 @@ def schedule_uninstall():
     p.unlink(missing_ok=True)
 
 
-def login_item(on):
+def login_item(mode):
+    """mode: "off" | "menubar" (solo icono 👁) | "window" (abre la ventana al encender el Mac).
+    Acepta True/False por compatibilidad (True = menubar)."""
+    mode = {True: "menubar", False: "off", "on": "menubar"}.get(mode, mode)
     p = agent_path(LABEL_MENUBAR)
-    if not on:
+    if mode == "off":
         p.unlink(missing_ok=True)
         return
     ap = app_path()
     if not IS_MAC or not ap:
         raise RuntimeError("Solo disponible con la app instalada en macOS")
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(plistlib.dumps({"Label": LABEL_MENUBAR, "RunAtLoad": True,
-                                  "ProgramArguments": ["/usr/bin/open", "-g", "-a", ap, "--args", "--background"]}))
+    args = ["/usr/bin/open", "-g", "-a", ap, "--args", "--background"] if mode == "menubar" else ["/usr/bin/open", "-a", ap]
+    p.write_bytes(plistlib.dumps({"Label": LABEL_MENUBAR, "RunAtLoad": True, "ProgramArguments": args}))
+
+
+def login_mode():
+    p = agent_path(LABEL_MENUBAR)
+    if not p.exists():
+        return "off"
+    try:
+        args = plistlib.loads(p.read_bytes()).get("ProgramArguments", [])
+    except Exception:  # noqa: BLE001
+        return "menubar"
+    return "menubar" if "--background" in args else "window"
 
 
 def schedule_status():
     return {"supported": IS_MAC, "installed": agent_path(LABEL).exists(),
-            "login_item": agent_path(LABEL_MENUBAR).exists(), "app": app_path() is not None}
+            "login_item": agent_path(LABEL_MENUBAR).exists(), "login_mode": login_mode(),
+            "app": app_path() is not None}
 
 
 # ================================================================ panel (servidor local)
@@ -1061,10 +1297,61 @@ MASK = "••••"
 
 def public_cfg(cfg):
     c = {k: _copy(v) for k, v in cfg.items() if k != "watches"}
-    tok = c["telegram"].get("token", "")
+    tok = tg_token(cfg)
     c["telegram"]["token"] = (MASK + tok[-4:]) if tok else ""
-    c["excel_full_path"], c["csv_full_path"] = str(excel_path(cfg)), str(csv_path(cfg))
+    c["csv_full_path"] = str(csv_path(cfg))
     return c
+
+
+def state_etag():
+    """Cambia solo si cambia algún archivo de datos (o pasa un minuto, por los «hace X min»)."""
+    parts = [VERSION, str(int(time.time() // 60))]
+    for f in (CONFIG_PATH, STATE_PATH, HISTORY_PATH, UI_PATH, agent_path(LABEL), agent_path(LABEL_MENUBAR)):
+        try:
+            parts.append(str(f.stat().st_mtime_ns))
+        except OSError:
+            parts.append("-")
+    return '"' + hashlib.sha1("|".join(parts).encode()).hexdigest()[:16] + '"'
+
+
+def choose_file_mac(prompt):
+    r = subprocess.run(["osascript", "-e", f'POSIX path of (choose file with prompt "{prompt}" of type {{"json", "public.json"}})'],
+                       capture_output=True, text=True, timeout=600)
+    return r.stdout.strip() or None
+
+
+def export_watches():
+    cfg = load_config()
+    keep = [{k: v for k, v in w.items() if k != "auto_name"} for w in cfg["watches"]]
+    out = Path.home() / "Downloads" / f"webwatch-webs-{datetime.now():%Y%m%d}.json"
+    out.parent.mkdir(exist_ok=True)
+    save_json(out, {"webwatch": VERSION, "exported": now(), "watches": keep})
+    subprocess.Popen(["open", "-R", str(out)])
+    return out
+
+
+def import_watches(path):
+    data = load_json(Path(path), None)
+    items = data.get("watches") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        raise ValueError("Ese archivo no es una exportación de WebWatch")
+    cfg = load_config()
+    have = {w["url"] for w in cfg["watches"]}
+    ids = {w["id"] for w in cfg["watches"]}
+    added = 0
+    for raw in items:
+        try:
+            w = clean_watch(dict(raw, id=None if raw.get("id") in ids else raw.get("id")))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        if w["url"] in have:
+            continue
+        cfg["watches"].append(w)
+        have.add(w["url"])
+        ids.add(w["id"])
+        added += 1
+    save_config(cfg)
+    return added, len(items)
 
 
 def build_view():
@@ -1079,7 +1366,7 @@ def build_view():
     for w in cfg["watches"]:
         st, hs = state.get(w["id"], {}), by.get(w["id"], [])
         data = st.get("data", {})
-        prices = [[h["t"], h["price"]] for h in hs if h.get("price") is not None][-60:]
+        prices = (st.get("prices") or [[h["t"], h["price"]] for h in hs if h.get("price") is not None])[-120:]
         last = st.get("last")
         nxt = fmt_ts(ts(last["t"]) + retry_interval(w, st, cfg)) if last else None
         watches.append(dict(w, store=store_of(w["url"]), last=last, errors=st.get("errors", 0), prices=prices,
@@ -1135,7 +1422,7 @@ def clean_watch(d):
     w = {"id": d.get("id") or uuid.uuid4().hex[:8], "name": name[:80], "url": url, "type": kind,
          "selector": (d.get("selector") or "").strip(),
          "render": d.get("render") if d.get("render") in ("auto", "http", "browser") else "auto",
-         "interval": interval, "enabled": bool(d.get("enabled", True))}
+         "interval": interval, "enabled": bool(d.get("enabled", True)), "screenshot": bool(d.get("screenshot"))}
     if auto_name:
         w["auto_name"] = True
     if kind == "change":
@@ -1156,13 +1443,67 @@ def open_path(path):
     subprocess.Popen(["open" if IS_MAC else "xdg-open", str(path)])
 
 
-def start_bot_browser(url):
+PICK_JS = r"""
+(() => {
+  if (window.__wwPick) return; window.__wwPick = true;
+  const box = document.createElement('div'), bar = document.createElement('div');
+  box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #0a84ff;background:rgba(10,132,255,.12);border-radius:4px;transition:all .05s';
+  bar.style.cssText = 'pointer-events:none;position:fixed;bottom:16px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#0a84ff;color:#fff;font:600 14px -apple-system,system-ui;padding:10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.25)';
+  bar.textContent = '👁 WebWatch · Haz clic en el PRECIO (o en la zona que quieres vigilar)';
+  const add = () => { document.documentElement.append(box, bar); };
+  document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', add) : add();
+  const esc = s => CSS.escape(s);
+  const sel = el => {
+    const parts = [];
+    for (let e = el; e && e.nodeType === 1 && e !== document.documentElement; e = e.parentElement) {
+      if (e.id && !/\d{3,}/.test(e.id)) { parts.unshift('#' + esc(e.id)); break; }
+      let p = e.tagName.toLowerCase();
+      const cls = [...e.classList].filter(c => !/\d{3,}|active|hover|selected/.test(c)).slice(0, 2);
+      if (cls.length) p += '.' + cls.map(esc).join('.');
+      const sib = e.parentElement ? [...e.parentElement.children].filter(x => x.tagName === e.tagName) : [];
+      if (sib.length > 1 && !cls.length) p += `:nth-of-type(${sib.indexOf(e) + 1})`;
+      parts.unshift(p);
+      const s = parts.join(' > ');
+      try { if (document.querySelectorAll(s).length === 1) return s; } catch (_) {}
+    }
+    return parts.join(' > ');
+  };
+  let cur = null;
+  document.addEventListener('mouseover', e => { if (e.target === bar) return; cur = e.target; const r = cur.getBoundingClientRect();
+    Object.assign(box.style, {left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px'}); }, true);
+  document.addEventListener('click', async e => {
+    if (!window.__wwPick || e.target === bar) return;
+    e.preventDefault(); e.stopPropagation();
+    const el = e.target, text = (el.innerText || el.textContent || '').trim().slice(0, 200);
+    const res = await window.wwPick({selector: sel(el), text});
+    bar.textContent = res; bar.style.background = res.startsWith('✓') ? '#28a745' : '#e5484d';
+  }, true);
+})();
+"""
+
+
+def _pick_result(url, kind):
+    def cb(_source, data):
+        sel_, text = (data or {}).get("selector", ""), (data or {}).get("text", "")
+        price = parse_price(text) if kind == "product" else None
+        if kind == "product" and price is None:
+            return f"«{text[:40]}» no parece un precio: prueba a hacer clic justo encima del número"
+        save_json(PICK_PATH, {"url": url, "selector": sel_, "text": text, "price": price, "t": now()})
+        shown = money(price) if price is not None else f"«{text[:40]}»"
+        return f"✓ Elegido: {shown}. Vuelve a WebWatch y pulsa Guardar (ya puedes cerrar esta ventana)"
+    return cb
+
+
+def start_bot_browser(url, pick=None):
     if not has_playwright():
         raise RuntimeError("Falta Playwright. Borra ~/Library/Application Support/WebWatch/.installed y vuelve a abrir WebWatch")
     if urlparse(url).scheme not in ("http", "https"):
         raise ValueError("Dirección no válida")
     log = open(LOG_PATH, "a")
-    subprocess.Popen([venv_python(), str(BASE / "webwatch.py"), "browser", url], stdout=log, stderr=log,
+    extra = ["--pick", pick] if pick in ("product", "change", "keyword") else []
+    if extra:
+        PICK_PATH.unlink(missing_ok=True)
+    subprocess.Popen([venv_python(), str(BASE / "webwatch.py"), "browser", url] + extra, stdout=log, stderr=log,
                      start_new_session=True, cwd=str(DATA))
 
     def front():  # desde la app activa (la ventana de WebWatch) macOS sí deja pasar el foco a Chrome
@@ -1186,12 +1527,14 @@ class Handler(BaseHTTPRequestHandler):
     def _host_ok(self):
         return self.headers.get("Host", "") in (f"127.0.0.1:{PORT}", f"localhost:{PORT}")
 
-    def _send(self, code, body, ctype="application/json"):
+    def _send(self, code, body, ctype="application/json", etag=None):
         data = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", "no-cache" if etag else "no-store")
+        if etag:
+            self.send_header("ETag", etag)
         self.end_headers()
         self.wfile.write(data)
 
@@ -1205,7 +1548,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/ping":
             return self._send(200, {"ok": True, "app": "webwatch"})
         if path == "/api/state":
-            return self._send(200, build_view())
+            tag = state_etag()
+            if self.headers.get("If-None-Match") == tag:
+                self.send_response(304)
+                self.send_header("ETag", tag)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return None
+            return self._send(200, build_view(), etag=tag)
+        if path == "/api/pick":
+            return self._send(200, load_json(PICK_PATH, {}))
         if path == "/api/progress":
             return self._send(200, dict(read_progress(), now=now()))
         self._send(404, {"error": "no encontrado"})
@@ -1218,8 +1570,8 @@ class Handler(BaseHTTPRequestHandler):
             n = int(self.headers.get("Content-Length") or 0)
             body = json.loads(self.rfile.read(n) or b"{}")
             self._send(200, self.route(self.path, body))
-        except Busy as e:
-            self._send(409, {"error": str(e)})
+        except Busy:
+            self._send(409, {"error": "Ya estoy revisando: mira el progreso arriba", "busy": True})
         except Blocked as e:
             self._send(400, {"error": str(e), "blocked": True})
         except (ValueError, RuntimeError) as e:
@@ -1227,7 +1579,7 @@ class Handler(BaseHTTPRequestHandler):
         except requests.RequestException as e:
             if self.path == "/api/test":
                 return self._send(400, {"error": friendly_error(e, "")})
-            msg, tok = str(e), load_config()["telegram"].get("token")
+            msg, tok = str(e), tg_token(load_config())
             if tok:
                 msg = msg.replace(tok, "***")
             self._send(502, {"error": f"No se pudo conectar: {msg[:160]}"})
@@ -1281,22 +1633,28 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/settings":
             tg = b.get("telegram", {})
             tok = tg.get("token", "")
-            if tok and not tok.startswith(MASK):
-                cfg["telegram"]["token"] = tok.strip()
-            elif tok == "":
-                cfg["telegram"]["token"] = ""
+            if (tok and not tok.startswith(MASK)) or tok == "":
+                if IS_MAC and keychain_set(tok.strip()):
+                    cfg["telegram"].update(token="", keychain=bool(tok.strip()))
+                else:
+                    cfg["telegram"]["token"] = tok.strip()
             cfg["telegram"]["chat_id"] = str(tg.get("chat_id", "")).strip()
             cfg["telegram"]["enabled"] = bool(tg.get("enabled"))
             cfg["notify_desktop"] = bool(b.get("notify_desktop", True))
             if b.get("interval_hours"):
                 cfg["interval_hours"] = max(0.25, float(b["interval_hours"]))
-            for key in ("excel", "csv"):
-                if key in b:
-                    cfg[key]["enabled"] = bool(b[key].get("enabled", True))
-                    if b[key].get("path"):
-                        cfg[key]["path"] = b[key]["path"].strip()
-                    if key == "csv" and b[key].get("delimiter") in (";", ","):
-                        cfg[key]["delimiter"] = b[key]["delimiter"]
+            if "csv" in b:
+                cfg["csv"]["enabled"] = bool(b["csv"].get("enabled", True))
+                if b["csv"].get("path"):
+                    cfg["csv"]["path"] = b["csv"]["path"].strip()
+                if b["csv"].get("delimiter") in (";", ","):
+                    cfg["csv"]["delimiter"] = b["csv"]["delimiter"]
+            if "quiet" in b:
+                q = b["quiet"]
+                hhmm = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+                if not (hhmm.match(q.get("from", "")) and hhmm.match(q.get("to", ""))):
+                    raise ValueError("Las horas de silencio deben ir en formato HH:MM")
+                cfg["quiet"] = {"enabled": bool(q.get("enabled")), "from": q["from"], "to": q["to"]}
             save_config(cfg)
             return {"ok": True}
         if path == "/api/auto":
@@ -1306,16 +1664,27 @@ class Handler(BaseHTTPRequestHandler):
                 schedule_install()
             return {"ok": True}
         if path == "/api/login-item":
-            login_item(bool(b.get("on")))
+            login_item(b["mode"] if b.get("mode") in ("off", "menubar", "window") else bool(b.get("on")))
             return {"ok": True}
         if path == "/api/seen":
             save_json(UI_PATH, dict(load_json(UI_PATH, {}), seen=now()))
             return {"ok": True}
         if path == "/api/browser":
-            start_bot_browser(b.get("url") or "https://www.amazon.es")
+            start_bot_browser(b.get("url") or "https://www.amazon.es", pick=b.get("pick"))
+            return {"ok": True}
+        if path == "/api/export":
+            return {"path": str(export_watches())}
+        if path == "/api/import":
+            f = choose_file_mac("Elige una exportación de WebWatch (.json)")
+            if not f:
+                return {"added": 0, "cancelled": True}
+            added, total = import_watches(f)
+            return {"added": added, "total": total}
+        if path == "/api/pick/clear":
+            PICK_PATH.unlink(missing_ok=True)
             return {"ok": True}
         if path == "/api/telegram/detect":
-            tok = cfg["telegram"].get("token")
+            tok = tg_token(cfg)
             if not tok:
                 raise ValueError("Pega primero el token del bot")
             r = requests.get(f"https://api.telegram.org/bot{tok}/getUpdates", timeout=20).json()
@@ -1336,19 +1705,19 @@ class Handler(BaseHTTPRequestHandler):
             telegram_send(cfg, "✅ WebWatch conectado: aquí recibirás tus alertas.")
             return {"ok": True}
         if path == "/api/notify/test":
-            notify_desktop("WebWatch", "Así se verán tus avisos 👀")
+            notify_desktop("WebWatch", "Así se verán tus avisos 👀 (pulsa para abrir la web)", "https://example.com", force=True)
             return {"ok": True}
         if path == "/api/open":
             what = b.get("what")
-            if what == "excel":
-                open_path(ensure_excel(cfg))
-            elif what == "csv":
+            if what == "csv":
                 open_path(csv_path(cfg) if csv_path(cfg).exists() else DATA)
             elif what == "folder":
                 open_path(DATA)
             elif what == "log":
                 LOG_PATH.touch()
                 open_path(LOG_PATH)
+            elif what == "shot" and b.get("name") and (SHOTS_DIR / Path(b["name"]).name).exists():
+                open_path(SHOTS_DIR / Path(b["name"]).name)
             elif what == "url" and urlparse(b.get("url", "")).scheme in ("http", "https"):
                 open_path(b["url"])
             else:
@@ -1456,7 +1825,7 @@ def cmd_browser(args):
         notify_desktop("WebWatch", "Hay una revisión en curso: abro el navegador del bot en cuanto termine.")
         fcntl.flock(lock, fcntl.LOCK_EX)
     try:
-        _bot_browser_session(sync_playwright, args.url)
+        _bot_browser_session(sync_playwright, args.url, getattr(args, "pick", None))
     finally:
         BOT_PID.unlink(missing_ok=True)
         fcntl.flock(lock, fcntl.LOCK_UN)
@@ -1464,10 +1833,13 @@ def cmd_browser(args):
     recheck_blocked(args.url)
 
 
-def _bot_browser_session(sync_playwright, url):
+def _bot_browser_session(sync_playwright, url, pick=None):
     with sync_playwright() as pw:
         ctx = launch_ctx(pw, headless=False)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
+        if pick:
+            page.expose_binding("wwPick", _pick_result(url, pick))
+            page.add_init_script(PICK_JS)
         bring_bot_chrome_front()
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -1515,10 +1887,11 @@ def main():
     sub.add_parser("install").set_defaults(f=lambda a: (schedule_install(), print("Revisión automática activada")))
     sub.add_parser("uninstall").set_defaults(f=lambda a: (schedule_uninstall(), print("Revisión automática quitada")))
     li = sub.add_parser("login-item")
-    li.add_argument("state", choices=["on", "off"])
-    li.set_defaults(f=lambda a: login_item(a.state == "on"))
+    li.add_argument("state", choices=["on", "off", "menubar", "window"])
+    li.set_defaults(f=lambda a: login_item(a.state))
     b = sub.add_parser("browser")
     b.add_argument("url")
+    b.add_argument("--pick", choices=["product", "change", "keyword"])
     b.set_defaults(f=cmd_browser)
     args = ap.parse_args()
     (args.f if args.cmd else cmd_ui)(args)
