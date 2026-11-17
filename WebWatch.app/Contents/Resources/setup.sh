@@ -62,6 +62,54 @@ if [ -z "${WW_SKIP_BROWSER:-}" ] && [ ! -d "/Applications/Google Chrome.app" ] &
   "$VENV/bin/python" -m playwright install chromium >>"$LOG" 2>&1 || echo "AVISO: sin Chromium" >>"$LOG"
 fi
 
+# 4b) Intérprete con identidad propia: sin esto el Dock muestra «Python» con el cohete y, si lo fijas,
+#     fija Python.app en vez de WebWatch. Si algo falla, el lanzador usa el Python normal.
+build_runtime(){
+  local RT="$SUP/runtime/WebWatch.app" X BASE STUB REL LIB
+  BASE="$("$VENV/bin/python" -c 'import sys; print(sys.base_prefix)' 2>/dev/null)" || return 1
+  STUB="$BASE/Resources/Python.app/Contents/MacOS/Python"
+  [ -x "$STUB" ] || return 1
+  rm -rf "$SUP/runtime" && mkdir -p "$RT/Contents/MacOS" "$RT/Contents/Resources" || return 1
+  X="$RT/Contents/MacOS/webwatch-python"
+  cp "$STUB" "$X" || return 1
+  # El stub enlaza el framework con una ruta relativa a su sitio original: la hacemos absoluta.
+  REL="$(otool -L "$STUB" | awk '/@executable_path/ {print $1; exit}')"
+  if [ -n "$REL" ]; then
+    LIB="$(cd "$(dirname "$STUB")" && cd "$(dirname "${REL#@executable_path/}")" && pwd)/$(basename "$REL")"
+    [ -e "$LIB" ] || return 1
+    install_name_tool -change "$REL" "$LIB" "$X" 2>/dev/null || return 1
+  fi
+  codesign -f -s - "$X" >/dev/null 2>&1 || return 1
+  cp "$RES/icon.icns" "$RT/Contents/Resources/icon.icns" 2>/dev/null
+  cat > "$RT/Contents/MacOS/WebWatch" <<'EOS'
+#!/bin/bash
+# Si fijas WebWatch en el Dock, se fija este bundle: abre la app de verdad.
+APP="$(cat "$HOME/Library/Application Support/WebWatch/app_path.txt" 2>/dev/null)"
+[ -x "$APP/Contents/MacOS/WebWatch" ] || APP="/Applications/WebWatch.app"
+exec "$APP/Contents/MacOS/WebWatch" "$@"
+EOS
+  chmod +x "$RT/Contents/MacOS/WebWatch"
+  cat > "$RT/Contents/Info.plist" <<EOS
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>com.webwatch.app.runtime</string>
+  <key>CFBundleName</key><string>WebWatch</string>
+  <key>CFBundleDisplayName</key><string>WebWatch</string>
+  <key>CFBundleExecutable</key><string>WebWatch</string>
+  <key>CFBundleIconFile</key><string>icon.icns</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$VER</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict></plist>
+EOS
+  codesign -f -s - "$RT" >/dev/null 2>&1
+  # Prueba de humo: si no arranca con las librerías del venv, se descarta.
+  "$X" -s -c 'import site, sys; site.addsitedir(sys.argv[1]); import AppKit, WebKit' \
+    "$("$VENV/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" >/dev/null 2>&1 || return 1
+}
+build_runtime || { echo "AVISO: sin intérprete propio (se usará Python tal cual)" >>"$LOG"; rm -rf "$SUP/runtime"; }
+
 # 5) Revisión automática y barra de menús (solo la primera vez, para respetar lo que cambies en Ajustes)
 "$VENV/bin/python" "$CODE/webwatch.py" install >>"$LOG" 2>&1 || echo "AVISO: launchd" >>"$LOG"
 if [ $FIRST = 1 ]; then

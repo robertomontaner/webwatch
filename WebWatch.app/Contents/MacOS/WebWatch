@@ -28,6 +28,14 @@ if [ ! -x "$PY" ] || [ "$(cat "$SUP/.installed" 2>/dev/null)" != "$VER" ] || [ !
 fi
 
 if "$PY" -c "import AppKit, WebKit" >/dev/null 2>&1; then
+  # Intérprete dentro de un bundle «WebWatch» (lo crea setup.sh): así el Dock muestra WebWatch y no «Python».
+  RTPY="$SUP/runtime/WebWatch.app/Contents/MacOS/webwatch-python"
+  if [ -x "$RTPY" ]; then
+    SITE="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)"
+    exec "$RTPY" -s -c 'import runpy, site, sys
+site.addsitedir(sys.argv[1]); sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name="__main__")' "$SITE" "$SUP/app/macapp.py" "$@" 2>>"$SUP/webwatch.log"
+  fi
   exec "$PY" "$SUP/app/macapp.py" "$@" 2>>"$SUP/webwatch.log"
 fi
 exec "$PY" "$SUP/app/webwatch.py" ui

@@ -57,8 +57,23 @@ LA_DIR = Path.home() / "Library" / "LaunchAgents"
 PORT = 8750
 TICK_SECONDS = 600
 IS_MAC = platform.system() == "Darwin"
+BLOCK_RETRY_HOURS = 6  # con captcha no insiste: cada intento empeora la «reputación» ante la tienda
+
+
+def _chrome_major():
+    """Versión real de Chrome instalado: el user agent debe coincidir con la que anuncia el propio navegador
+    (sec-ch-ua). Si no coincide, las tiendas lo ven como bot y piden captcha aunque ya lo resolvieras."""
+    for app in ("/Applications/Google Chrome.app", str(Path.home() / "Applications/Google Chrome.app")):
+        try:
+            with open(f"{app}/Contents/Info.plist", "rb") as f:
+                return str(plistlib.load(f)["CFBundleShortVersionString"]).split(".")[0]
+        except Exception:  # noqa: BLE001
+            continue
+    return "142"
+
+
 CHROME_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-             "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36")
+             f"(KHTML, like Gecko) Chrome/{_chrome_major()}.0.0.0 Safari/537.36")
 HTTP_HEADERS = {
     "User-Agent": CHROME_UA,
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
@@ -173,18 +188,39 @@ def online():
     return False
 
 
+STORE_MIN_HOURS = 2  # Amazon/AliExpress: más a menudo dispara captchas a diario
+
+
 def interval_of(w, cfg):
-    return float(w.get("interval") or cfg.get("interval_hours") or 4) * 3600
+    h = float(w.get("interval") or cfg.get("interval_hours") or 4)
+    if store_of(w.get("url", "")):
+        h = max(h, STORE_MIN_HOURS)
+    return h * 3600
+
+
+def _jitter(w, st):
+    """Variación estable (misma para is_due y para «próxima revisión») a partir de la web y su última
+    revisión. Tiendas: +0-25 % (nunca por debajo del mínimo), resto ±10 %. Así no revisa siempre a la
+    misma hora exacta, que es un patrón muy de bot."""
+    seed = f"{w.get('id')}|{(st.get('last') or {}).get('t', '')}".encode()
+    r = int(hashlib.sha256(seed).hexdigest()[:8], 16) / 0xFFFFFFFF
+    return 1 + 0.25 * r if store_of(w.get("url", "")) else 0.9 + 0.2 * r
+
+
+def retry_interval(w, st, cfg):
+    iv = interval_of(w, cfg)
+    if st.get("blocked"):
+        iv = max(iv, BLOCK_RETRY_HOURS * 3600)  # captcha: no insistir hasta que lo resuelvas
+    elif st.get("errors"):
+        iv = min(iv, 1800)  # otro fallo: reintenta en 30 min
+    return iv * _jitter(w, st)
 
 
 def is_due(w, st, cfg):
     last = (st.get("last") or {}).get("t")
     if not last:
         return True
-    iv = interval_of(w, cfg)
-    if st.get("errors"):
-        iv = min(iv, 1800)  # si falló, reintenta en 30 min
-    return time.time() - ts(last) >= iv - 60
+    return time.time() - ts(last) >= retry_interval(w, st, cfg) - 60
 
 
 def money(p, cur=None):
@@ -287,7 +323,7 @@ ALI_RX_NUM = [r'"minActivityAmount"\s*:\s*\{[^{}]*?"value"\s*:\s*([\d.]+)',
               r'"minAmount"\s*:\s*\{[^{}]*?"value"\s*:\s*([\d.]+)']
 WAIT_SEL = {
     "amazon": "#productTitle, form[action*='validateCaptcha'], #captchacharacters",
-    "aliexpress": ", ".join(ALI_PRICE + ["[data-pl='product-title']"]),
+    "aliexpress": ", ".join(ALI_PRICE + ["[data-pl='product-title']", "iframe[src*='punish']"]),
 }
 
 
@@ -477,7 +513,10 @@ def friendly_error(e, url):
         return {404: "La página ya no existe (error 404)", 403: f"{host} no deja entrar al bot (error 403)",
                 401: "La página pide usuario y contraseña", 429: f"{host} pide ir más despacio (error 429)"}.get(
             code, f"{host} respondió con error {code}")
-    return str(e)
+    msg = str(e)
+    if type(e).__name__ == "TimeoutError" or "Timeout" in msg.split("\n")[0]:
+        return f"{host} tardó demasiado en cargar en el navegador del bot"
+    return msg.split("\nCall log:")[0]
 
 
 # ================================================================ descarga
@@ -541,10 +580,18 @@ class Fetcher:
     def browser(self, url, store):
         page = self._context().new_page()
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                # Con tienda conocida basta con que empiece a llegar la página: luego se espera
+                # al precio o al captcha (WAIT_SEL), que es lo que importa.
+                page.goto(url, wait_until="commit" if WAIT_SEL.get(store) else "domcontentloaded", timeout=45000)
+            except Exception as e:  # noqa: BLE001
+                # Muchas tiendas no terminan nunca de «cargar» (anuncios, rastreadores). Si ya hay
+                # página, se sigue; si no, error.
+                if type(e).__name__ != "TimeoutError" or not page.url.startswith("http"):
+                    raise
             try:
                 if WAIT_SEL.get(store):
-                    page.wait_for_selector(WAIT_SEL[store], timeout=15000)
+                    page.wait_for_selector(WAIT_SEL[store], timeout=30000)
                 else:
                     page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:  # noqa: BLE001
@@ -812,6 +859,7 @@ def run_checks(ids=None):
             try:
                 r = check(w, st.get("data", {}), fetcher)
                 st["data"], st["errors"] = r["state"], 0
+                st.pop("blocked", None)
                 if w.get("auto_name") and r.get("title"):
                     w["name"] = res["name"] = r["title"][:70]
                     w.pop("auto_name", None)
@@ -827,9 +875,18 @@ def run_checks(ids=None):
                     notify_telegram(cfg, f"🔔 {w['name']}\n{title}\n{detail}\n{w['url']}")
             except Exception as e:  # noqa: BLE001
                 st["errors"] = st.get("errors", 0) + 1
-                res.update(status="ERROR", value="", note=friendly_error(e, w["url"])[:240],
-                           blocked=isinstance(e, Blocked))
-                if st["errors"] == defaults.get("alert_after_errors", 3):
+                blocked = isinstance(e, Blocked)
+                res.update(status="ERROR", value="", note=friendly_error(e, w["url"])[:240], blocked=blocked)
+                if blocked and not st.get("blocked"):
+                    # Primer captcha: avisa ya (no tras 3 fallos) y deja de insistir hasta que se resuelva.
+                    msg = (f"{w['name']}: la tienda pide captcha. Abre WebWatch y pulsa «Resolver»; "
+                           f"mientras tanto lo reintento cada {BLOCK_RETRY_HOURS} h.")
+                    if cfg.get("notify_desktop", True):
+                        notify_desktop("WebWatch · Hace falta resolver un captcha", msg, w["url"])
+                    notify_telegram(cfg, f"🧩 {msg}\n{w['url']}")
+                if blocked:
+                    st["blocked"] = res["t"]
+                elif st["errors"] == defaults.get("alert_after_errors", 3):
                     msg = f"{w['name']} falla {st['errors']} veces seguidas: {res['note']}"
                     if cfg.get("notify_desktop", True):
                         notify_desktop("WebWatch · No puedo revisar una web", msg, w["url"])
@@ -979,13 +1036,12 @@ def build_view():
         data = st.get("data", {})
         prices = [[h["t"], h["price"]] for h in hs if h.get("price") is not None][-60:]
         last = st.get("last")
-        nxt = fmt_ts(ts(last["t"]) + (min(interval_of(w, cfg), 1800) if st.get("errors") else interval_of(w, cfg))) \
-            if last else None
+        nxt = fmt_ts(ts(last["t"]) + retry_interval(w, st, cfg)) if last else None
         watches.append(dict(w, store=store_of(w["url"]), last=last, errors=st.get("errors", 0), prices=prices,
                             min=data.get("min"), max=data.get("max"), currency=data.get("currency"),
                             available=data.get("available"), title=data.get("title"),
                             last_alert=st.get("last_alert"), last_change=st.get("last_change"), next=nxt,
-                            blocked=bool(hs and hs[-1].get("blocked")),
+                            blocked=bool(st.get("blocked")),
                             checks=len(hs)))
     alerts = [h for h in hist if h.get("status") == "ALERTA"]
     today = now()[:10]
@@ -1028,6 +1084,9 @@ def clean_watch(d):
     interval = num(d.get("interval"))
     if interval is not None and interval < 0.25:
         raise ValueError("La frecuencia mínima es 15 minutos")
+    if interval is not None and store_of(url) and interval < STORE_MIN_HOURS:
+        raise ValueError(f"En {STORE_NAMES[store_of(url)]} la frecuencia mínima es {STORE_MIN_HOURS} h "
+                         "(más a menudo la tienda acaba pidiendo captcha)")
     w = {"id": d.get("id") or uuid.uuid4().hex[:8], "name": name[:80], "url": url, "type": kind,
          "selector": (d.get("selector") or "").strip(),
          "render": d.get("render") if d.get("render") in ("auto", "http", "browser") else "auto",
@@ -1315,6 +1374,25 @@ def cmd_browser(args):
             ctx.close()
         except Exception:  # noqa: BLE001
             pass
+    fcntl.flock(lock, fcntl.LOCK_UN)
+    lock.close()
+    recheck_blocked(args.url)
+
+
+def recheck_blocked(url):
+    """Tras resolver el captcha, el permiso dura poco: revisa ya las webs bloqueadas de esa tienda."""
+    store, host = store_of(url), urlparse(url).netloc
+    state = load_json(STATE_PATH, {})
+    ids = [w["id"] for w in load_config()["watches"]
+           if state.get(w["id"], {}).get("blocked")
+           and ((store and store_of(w["url"]) == store) or urlparse(w["url"]).netloc == host)]
+    if not ids:
+        return
+    print(f"[{now()}] Navegador del bot cerrado: reviso {len(ids)} web(s) que tenían captcha", flush=True)
+    try:
+        run_checks(ids)
+    except Busy:
+        pass
 
 
 def main():

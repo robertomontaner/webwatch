@@ -1,4 +1,4 @@
-# 👁 WebWatch 2.1 para Mac
+# 👁 WebWatch 2.2 para Mac
 
 Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, ofertas en Amazon o AliExpress, stock... Funciona **sin IA**: solo aplica las reglas que tú le pones. Todo se queda en tu Mac.
 
@@ -9,7 +9,7 @@ Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, 
    ```
    bash ~/Downloads/WebWatch/crear-dmg.sh
    ```
-   Se crea `WebWatch-2.1.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
+   Se crea `WebWatch-2.2.dmg`, ya firmado. La primera vez macOS puede pedir permiso para que Terminal controle el Finder (es para colocar el fondo y los iconos): acepta.
 2. Abre el `.dmg` y **arrastra WebWatch a Aplicaciones**.
 3. Abre WebWatch desde Aplicaciones o Launchpad. La primera vez te saluda y se prepara sola (1-3 min). Cuando acaba, te avisa con una notificación.
 
@@ -62,8 +62,8 @@ Todo está en `~/Library/Application Support/WebWatch/`. Para abrir esa carpeta:
 
 - **Lectura:** WebWatch reconoce las dos tiendas y saca solo el precio, el título y el stock, sin selector.
 - **Navegador:** usa tu Google Chrome con un perfil aparte, así que tu Chrome no se toca. Si no tienes Chrome, el instalador descarga Chromium.
-- **Captcha:** si una tienda pide captcha, verás un aviso con el botón **Resolver**. Se abre el navegador del bot, lo resuelves una vez y cierras la ventana. Después se recuerda. En ese navegador también puedes aceptar cookies o elegir país.
-- **Frecuencia:** revisa cada 2 horas o más. Amazon no permite el acceso automatizado en sus condiciones de uso; con una frecuencia baja y para uso personal (como hacen Keepa o CamelCamelCamel) normalmente no pasa nada, pero pueden bloquear.
+- **Captcha:** si una tienda pide captcha, te avisa una vez (notificación y Telegram) y verás el botón **Resolver**. Se abre el navegador del bot, lo resuelves y cierras la ventana: al cerrarla revisa enseguida esa tienda. Mientras no lo resuelvas, solo lo reintenta cada 6 horas (insistir hace que la tienda desconfíe más). En ese navegador también puedes aceptar cookies o elegir país.
+- **Frecuencia:** mínimo cada 2 horas (la app no deja menos en estas tiendas). Amazon no permite el acceso automatizado en sus condiciones de uso; con una frecuencia baja y para uso personal (como hacen Keepa o CamelCamelCamel) normalmente no pasa nada, pero pueden bloquear.
 
 ## Problemas frecuentes
 
