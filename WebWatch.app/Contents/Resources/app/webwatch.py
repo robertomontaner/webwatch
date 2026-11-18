@@ -100,6 +100,7 @@ DEFAULT_CONFIG = {
     "notify_desktop": True,
     "telegram": {"enabled": False, "token": "", "chat_id": ""},
     "quiet": {"enabled": False, "from": "23:00", "to": "08:00"},
+    "updates": {"auto_check": True},
     "csv": {"enabled": True, "path": "observaciones.csv", "delimiter": ";"},
     "watches": [
         {"id": "obra0001", "name": "Obra piso Greenquart", "url": "https://greenquart.com/estado-obra.php",
@@ -1421,6 +1422,187 @@ def schedule_status():
             "app": app_path() is not None}
 
 
+# ================================================================ actualizaciones
+# La app mira la última release de GitHub (la publica .github/workflows/release.yml al subir VERSION).
+UPDATE_REPO = "robertomontaner/webwatch"
+UPDATE_API = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+UPDATE_PATH = DATA / "update.json"
+UPDATE_DIR = DATA / "updates"
+UPDATE_EVERY_H = 6
+_UPD = {"state": "idle", "msg": "", "pct": 0}  # estado de la instalación en curso (solo en memoria)
+_UPD_LOCK = threading.Lock()
+ON_QUIT = None  # macapp.py lo cambia para cerrar la app con orden antes de sustituirla
+
+
+def _ver(v):
+    nums = re.findall(r"\d+", str(v or ""))[:3]
+    return tuple(int(n) for n in nums + ["0"] * (3 - len(nums))) if nums else (0, 0, 0)
+
+
+def _release_notes(body):
+    """Del texto de la release, solo la sección «Novedades» (sin las instrucciones de instalación)."""
+    m = re.search(r"^##\s*Novedades\s*$(.*?)(?=^##\s|\Z)", body, re.S | re.M)
+    text = m.group(1) if m else re.sub(r"^##\s*Instalar.*?(?=^##\s|\Z)", "", body, flags=re.S | re.M)
+    text = re.sub(r"\*\*Full Changelog\*\*.*", "", text)
+    return re.sub(r"\*\*|`", "", text).strip()[:3000]
+
+
+def check_update(force=False):
+    """Consulta GitHub como mucho cada 6 h (o al pulsar «Buscar»). Devuelve el estado para el panel."""
+    st = load_json(UPDATE_PATH, {})
+    if force or time.time() - st.get("checked", 0) > UPDATE_EVERY_H * 3600:
+        try:
+            r = requests.get(UPDATE_API, timeout=15, headers={"Accept": "application/vnd.github+json",
+                                                              "User-Agent": f"WebWatch/{VERSION}"})
+            if r.status_code == 404:
+                raise RuntimeError("Aún no hay versiones publicadas")
+            r.raise_for_status()
+            rel = r.json()
+            dmg = next((a for a in rel.get("assets", []) if a.get("name", "").endswith(".dmg")), None)
+            st.update(checked=time.time(), error="", latest=str(rel.get("tag_name", "")).lstrip("v"),
+                      notes=_release_notes(rel.get("body") or ""), page=rel.get("html_url", ""),
+                      dmg_url=(dmg or {}).get("browser_download_url", ""), dmg_size=(dmg or {}).get("size", 0))
+        except Exception as e:  # noqa: BLE001
+            st.update(checked=time.time(), error=friendly_error(e, "") if isinstance(e, requests.RequestException) else str(e))
+        save_json(UPDATE_PATH, st)
+    return update_status(st)
+
+
+def update_status(st=None):
+    st = st if st is not None else load_json(UPDATE_PATH, {})
+    latest = st.get("latest", "")
+    return {"current": VERSION, "latest": latest, "checked": st.get("checked", 0), "error": st.get("error", ""),
+            "available": bool(latest and st.get("dmg_url") and _ver(latest) > _ver(VERSION)),
+            "notes": st.get("notes", ""), "page": st.get("page", ""), "app": app_path() or "",
+            "auto": load_config().get("updates", {}).get("auto_check", True), **_UPD}
+
+
+def maybe_notify_update():
+    """Revisión periódica desde la app: avisa una sola vez por versión nueva."""
+    if not load_config().get("updates", {}).get("auto_check", True):
+        return None
+    s = check_update()
+    st = load_json(UPDATE_PATH, {})
+    if s["available"] and st.get("notified") != s["latest"]:
+        notify_desktop("WebWatch", f"Hay una versión nueva ({s['latest']}). Ábreme para actualizar con un clic.")
+        st["notified"] = s["latest"]
+        save_json(UPDATE_PATH, st)
+    return s
+
+
+def update_loop(stop=None):
+    time.sleep(60)  # que arranque todo primero
+    while not (stop and stop.is_set()):
+        try:
+            maybe_notify_update()
+        except Exception as e:  # noqa: BLE001
+            print("Actualizaciones:", e, flush=True)
+        time.sleep(1800)  # comprueba cada 30 min si toca (la consulta real a GitHub es cada 6 h)
+
+
+def _upd(state, msg, pct=None):
+    _UPD.update(state=state, msg=msg)
+    if pct is not None:
+        _UPD["pct"] = pct
+
+
+def install_update():
+    """Descarga el .dmg, comprueba que es WebWatch y la versión anunciada, y deja un script que sustituye
+    la app en cuanto se cierre y la vuelve a abrir. Si algo falla, la app actual sigue tal cual."""
+    if not _UPD_LOCK.acquire(blocking=False):
+        raise RuntimeError("Ya estoy actualizando")
+    try:
+        s = check_update(force=True)
+        if not s["available"]:
+            raise RuntimeError(s["error"] or f"Ya tienes la última versión ({VERSION})")
+        dest = app_path()
+        if not dest:
+            raise RuntimeError("No encuentro WebWatch.app instalada")
+        if not os.access(Path(dest).parent, os.W_OK):
+            raise RuntimeError(f"No tengo permiso para escribir en {Path(dest).parent}")
+        st = load_json(UPDATE_PATH, {})
+        latest = s["latest"]
+        UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+        for old in UPDATE_DIR.iterdir():  # restos de intentos anteriores
+            shutil.rmtree(old, ignore_errors=True) if old.is_dir() else old.unlink(missing_ok=True)
+        dmg = UPDATE_DIR / f"WebWatch-{latest}.dmg"
+
+        _upd("downloading", f"Descargando WebWatch {latest}…", 0)
+        with requests.get(st["dmg_url"], stream=True, timeout=30, headers={"User-Agent": f"WebWatch/{VERSION}"}) as r:
+            r.raise_for_status()
+            total, got = int(r.headers.get("Content-Length") or st.get("dmg_size") or 0), 0
+            with open(dmg, "wb") as f:
+                for chunk in r.iter_content(256 * 1024):
+                    f.write(chunk)
+                    got += len(chunk)
+                    if total:
+                        _UPD["pct"] = min(99, int(got * 100 / total))
+        if st.get("dmg_size") and dmg.stat().st_size != st["dmg_size"]:
+            raise RuntimeError("La descarga llegó incompleta. Prueba otra vez")
+
+        _upd("verifying", "Comprobando la versión nueva…", 100)
+        mnt = UPDATE_DIR / "mnt"
+        mnt.mkdir()
+        r = subprocess.run(["hdiutil", "attach", "-nobrowse", "-noautoopen", "-readonly", "-mountpoint", str(mnt), str(dmg)],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode:
+            raise RuntimeError(f"No pude abrir el .dmg: {r.stderr.strip()[:120]}")
+        new = UPDATE_DIR / "WebWatch.app"
+        try:
+            src = mnt / "WebWatch.app"
+            if not src.is_dir():
+                raise RuntimeError("El .dmg no contiene WebWatch.app")
+            subprocess.run(["ditto", str(src), str(new)], check=True, timeout=300)
+        finally:
+            subprocess.run(["hdiutil", "detach", "-quiet", "-force", str(mnt)], capture_output=True, timeout=60)
+            try:
+                mnt.rmdir()
+            except OSError:
+                pass
+        with open(new / "Contents/Info.plist", "rb") as f:
+            info = plistlib.load(f)
+        got_ver = (new / "Contents/Resources/app/VERSION").read_text().strip()
+        if info.get("CFBundleIdentifier") != "com.webwatch.app" or got_ver != latest:
+            raise RuntimeError("El paquete descargado no es la versión esperada; no lo instalo")
+        if subprocess.run(["codesign", "--verify", "--deep", "--strict", str(new)], capture_output=True).returncode:
+            raise RuntimeError("La firma del paquete descargado no es válida; no lo instalo")
+        subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(new)], capture_output=True)
+
+        _upd("restarting", f"Instalando WebWatch {latest}: la app se cierra y se abre sola…", 100)
+        swap = UPDATE_DIR / "swap.sh"
+        swap.write_text(SWAP_SH)
+        log = open(UPDATE_DIR / "swap.log", "w")
+        subprocess.Popen(["/bin/bash", str(swap), str(os.getpid()), str(new), dest, str(dmg)],
+                         stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+        threading.Timer(1.5, lambda: (ON_QUIT or (lambda: os._exit(0)))()).start()
+        return {"ok": True, "version": latest}
+    except Exception as e:
+        _upd("error", str(e)[:200])
+        raise
+    finally:
+        _UPD_LOCK.release()
+
+
+SWAP_SH = r'''#!/bin/bash
+# Sustituye WebWatch.app por la versión nueva cuando la app se haya cerrado y la vuelve a abrir.
+PID="$1"; NEW="$2"; DEST="$3"; DMG="$4"
+OLD="$(dirname "$NEW")/WebWatch-anterior.app"
+for i in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
+kill -0 "$PID" 2>/dev/null && kill "$PID" 2>/dev/null && sleep 1
+rm -rf "$OLD"
+if mv "$DEST" "$OLD" && mv "$NEW" "$DEST"; then
+  echo "Actualizada: $DEST"
+  rm -rf "$OLD" "$DMG"
+  open "$DEST"
+else
+  echo "No pude sustituir $DEST"
+  [ -d "$DEST" ] || mv "$OLD" "$DEST"
+  open "$DEST"
+  open "$DMG"   # plan B: el usuario arrastra la app a Aplicaciones
+fi
+'''
+
+
 # ================================================================ panel (servidor local)
 MASK = "••••"
 
@@ -1690,6 +1872,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, load_json(PICK_PATH, {}))
         if path == "/api/progress":
             return self._send(200, dict(read_progress(), now=now()))
+        if path == "/api/update":
+            if "force=1" in self.path:
+                return self._send(200, check_update(force=True))
+            return self._send(200, update_status())
         self._send(404, {"error": "no encontrado"})
 
     def do_POST(self):
@@ -1785,6 +1971,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not (hhmm.match(q.get("from", "")) and hhmm.match(q.get("to", ""))):
                     raise ValueError("Las horas de silencio deben ir en formato HH:MM")
                 cfg["quiet"] = {"enabled": bool(q.get("enabled")), "from": q["from"], "to": q["to"]}
+            if "updates" in b:
+                cfg["updates"] = {"auto_check": bool(b["updates"].get("auto_check", True))}
             save_config(cfg)
             return {"ok": True}
         if path == "/api/auto":
@@ -1836,6 +2024,18 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         if path == "/api/notify/test":
             notify_desktop("WebWatch", "Así se verán tus avisos 👀 (pulsa para abrir la web)", "https://example.com", force=True)
+            return {"ok": True}
+        if path == "/api/update/install":
+            if _UPD["state"] in ("downloading", "verifying", "restarting"):
+                return {"ok": True}
+            _upd("downloading", "Preparando la actualización…", 0)
+
+            def work():
+                try:
+                    install_update()
+                except Exception as e:  # noqa: BLE001  (queda en _UPD para el panel)
+                    print("Actualización fallida:", e, flush=True)
+            threading.Thread(target=work, daemon=True).start()
             return {"ok": True}
         if path == "/api/open":
             what = b.get("what")

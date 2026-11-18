@@ -58,19 +58,26 @@ jobs:
         if: steps.ver.outputs.exists == 'false'
         run: |
           VER="${{ steps.ver.outputs.version }}"
-          cat > notes.md <<'EOF'
+          # Novedades = asuntos de los commits desde la release anterior (la app las enseña al ofrecer la actualización)
+          PREV="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+          {
+            echo "## Novedades"
+            echo
+            git log ${PREV:+$PREV..}HEAD --no-merges --pretty='- %s' | grep -v -i 'co-authored-by' | head -40
+            echo
+          } > notes.md
+          cat >> notes.md <<'EOF'
           ## Instalar
 
-          1. Descarga `WebWatch-VERSION.dmg`, ábrelo y arrastra WebWatch a Aplicaciones.
+          1. Descarga `WebWatch-@@VER@@.dmg`, ábrelo y arrastra WebWatch a Aplicaciones.
           2. La primera vez macOS dirá que no puede comprobar la app (no está firmada con
              Developer ID). Abre Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente»,
              o haz clic derecho en WebWatch → Abrir. Solo hace falta una vez.
 
           Si ya la tienes instalada, basta con sustituirla: tus webs y ajustes se conservan.
           EOF
-          sed -i '' "s/VERSION/$VER/" notes.md
+          sed -i '' "s/@@VER@@/$VER/" notes.md
           gh release create "v$VER" "${{ steps.dmg.outputs.dmg }}" \
             --title "WebWatch $VER" \
             --notes-file notes.md \
-            --generate-notes \
             --target "$GITHUB_SHA"

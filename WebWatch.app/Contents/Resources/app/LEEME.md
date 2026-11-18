@@ -1,4 +1,4 @@
-# 👁 WebWatch 2.4 para Mac
+# 👁 WebWatch 2.5 para Mac
 
 Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, ofertas en Amazon o AliExpress, stock... Funciona **sin IA**: solo aplica las reglas que tú le pones. Todo se queda en tu Mac.
 
@@ -17,7 +17,7 @@ Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, 
 
 Si abres la app desde el .dmg o desde Descargas, te ofrece copiarse ella sola a Aplicaciones.
 
-**Para actualizar:** arrastra la versión nueva a Aplicaciones y elige «Reemplazar». Al abrirla se actualiza sola y conserva tus webs, tus ajustes y tu historial.
+**Para actualizar:** WebWatch te avisa cuando hay versión nueva; pulsa **Actualizar** y se cierra unos segundos y se abre ya actualizada (o Ajustes → Actualizaciones → «Buscar ahora»). Conserva tus webs, tus ajustes y tu historial.
 
 **Si macOS dice que no puede abrirla:** ve a Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente», o ejecuta `firmar.sh`. Con el .dmg creado en tu propio Mac no debería pasar.
 

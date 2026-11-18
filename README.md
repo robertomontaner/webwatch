@@ -1,4 +1,4 @@
-# 👁 WebWatch 2.4 para Mac
+# 👁 WebWatch 2.5 para Mac
 
 Vigila páginas web y te avisa cuando cambian: el estado de la obra de tu piso, ofertas en Amazon o AliExpress, stock... Funciona **sin IA**: solo aplica las reglas que tú le pones. Todo se queda en tu Mac.
 
@@ -15,7 +15,7 @@ También puedes crear el .dmg en tu Mac con `bash crear-dmg.sh` (la primera vez 
 
 Si abres la app desde el .dmg o desde Descargas, te ofrece copiarse ella sola a Aplicaciones.
 
-**Para actualizar:** arrastra la versión nueva a Aplicaciones y elige «Reemplazar». Al abrirla se actualiza sola y conserva tus webs, tus ajustes y tu historial.
+**Para actualizar:** WebWatch mira cada pocas horas si hay versión nueva en GitHub y te avisa (notificación, aviso en el panel y en el menú 👁). Pulsa **Actualizar**: se descarga, comprueba que es WebWatch, se cierra unos segundos y se abre ya actualizada. También en Ajustes → Actualizaciones → «Buscar ahora», o en el menú WebWatch → «Buscar actualizaciones…». Nunca se instala sin que pulses. Tus webs, ajustes e historial se conservan. (A mano también vale: arrastra la versión nueva a Aplicaciones y elige «Reemplazar».)
 
 **Si macOS dice que no puede abrirla:** ve a Ajustes del Sistema → Privacidad y seguridad → «Abrir igualmente», o ejecuta `firmar.sh`. Con el .dmg creado en tu propio Mac no debería pasar.
 

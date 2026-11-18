@@ -204,6 +204,7 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
       <div class="stat"><div class="k">Última revisión</div><div class="v" id="sLast">—</div></div>
       <div class="stat"><div class="k">Próxima revisión</div><div class="v" id="sNext">—</div></div>
     </div>
+    <div id="updBanner"></div>
     <div id="prog"></div>
     <div id="banners"></div>
     <div class="list" id="list"></div>
@@ -262,6 +263,14 @@ kbd{font:11px -apple-system,system-ui;background:var(--chip);border:1px solid va
       <div class="gh"><h3>Navegador del bot</h3><p>Para Amazon, AliExpress y webs que cargan con JavaScript. Usa tu Google Chrome con un perfil aparte (no toca el tuyo).</p></div>
       <div class="set"><div class="l"><b id="pwState"></b><span>Si una tienda pide captcha o elegir país/cookies, ábrela aquí, resuélvelo una vez y cierra la ventana. Se recuerda.</span></div>
         <button class="btn sm" data-bot="https://www.amazon.es">Amazon</button><button class="btn sm" data-bot="https://es.aliexpress.com">AliExpress</button></div>
+    </div>
+    <div class="group">
+      <div class="gh"><h3>Actualizaciones</h3><p>WebWatch mira si hay versión nueva en GitHub cada pocas horas. Al actualizar se cierra un momento y se vuelve a abrir; tus webs, ajustes e historial se conservan.</p></div>
+      <div class="set"><div class="l"><b id="updTitle">Versión</b><span id="updInfo"></span></div>
+        <button class="btn sm" id="updCheck" data-busy="Buscando…">Buscar ahora</button><button class="btn sm p hide" id="updGo">Actualizar</button></div>
+      <div class="set"><div class="l"><b>Buscar actualizaciones automáticamente</b><span>Te avisa una vez por versión; nunca se instala sin que pulses «Actualizar»</span></div>
+        <label class="sw"><input type="checkbox" id="sUpd"><span></span></label></div>
+      <div class="set hide" id="updNotesRow" style="display:block"><pre class="sub" id="updNotes" style="white-space:pre-wrap;margin:0;font:inherit"></pre></div>
     </div>
     <p class="sub" style="text-align:center" id="about"></p>
   </section>
@@ -423,15 +432,16 @@ function renderSettings(force){
   $('#about').textContent=`WebWatch ${S.version} · Funciona sin IA, todo en tu Mac`;
   if(filled&&!force)return;filled=true;
   $('#sAuto').checked=!c.paused&&(!sc.supported||sc.installed);$('#sHours').value=String(c.interval_hours);if(!$('#sHours').value)$('#sHours').value='4';
-  $('#sLogin').value=sc.login_mode||'off';$('#sDesk').checked=c.notify_desktop!==false;const q=c.quiet||{};$('#sQuiet').checked=!!q.enabled;$('#sQFrom').value=q.from||'23:00';$('#sQTo').value=q.to||'08:00';$('#sTg').checked=c.telegram.enabled;
+  $('#sLogin').value=sc.login_mode||'off';$('#sDesk').checked=c.notify_desktop!==false;const q=c.quiet||{};$('#sQuiet').checked=!!q.enabled;$('#sQFrom').value=q.from||'23:00';$('#sQTo').value=q.to||'08:00';$('#sTg').checked=c.telegram.enabled;$('#sUpd').checked=(c.updates||{}).auto_check!==false;
   $('#sTok').value=c.telegram.token;$('#sChat').value=c.telegram.chat_id;$('#sCsv').checked=c.csv.enabled!==false;$('#sDelim').value=c.csv.delimiter||';';
 }
 function collect(){return{interval_hours:$('#sHours').value,notify_desktop:$('#sDesk').checked,
   telegram:{enabled:$('#sTg').checked,token:$('#sTok').value,chat_id:$('#sChat').value},
   csv:{enabled:$('#sCsv').checked,delimiter:$('#sDelim').value},
-  quiet:{enabled:$('#sQuiet').checked,from:$('#sQFrom').value||'23:00',to:$('#sQTo').value||'08:00'}}}
+  quiet:{enabled:$('#sQuiet').checked,from:$('#sQFrom').value||'23:00',to:$('#sQTo').value||'08:00'},
+  updates:{auto_check:$('#sUpd').checked}}}
 async function saveSettings(silent){try{await api('/api/settings',collect());$('#saved').textContent='✓ Guardado';setTimeout(()=>$('#saved').textContent='',1600);S=await api('/api/state');render()}catch(e){toast(e.message,true)}}
-['#sHours','#sDesk','#sTg','#sTok','#sChat','#sCsv','#sDelim','#sQuiet','#sQFrom','#sQTo'].forEach(s=>$(s).addEventListener('change',()=>saveSettings()));
+['#sHours','#sDesk','#sTg','#sTok','#sChat','#sCsv','#sDelim','#sQuiet','#sQFrom','#sQTo','#sUpd'].forEach(s=>$(s).addEventListener('change',()=>saveSettings()));
 $('#sAuto').onchange=async e=>{try{await api('/api/auto',{on:e.target.checked});toast(e.target.checked?'Revisión automática activada':'Revisión automática en pausa');load()}catch(x){toast(x.message,true);e.target.checked=!e.target.checked}};
 $('#sLogin').onchange=async e=>{const m=e.target.value;try{await api('/api/login-item',{mode:m});toast(m==='window'?'Al encender el Mac se abrirá la ventana':m==='menubar'?'Al encender el Mac aparecerá el icono 👁':'Ya no se abrirá al encender el Mac')}catch(x){toast(x.message,true)}};
 $('#xExport').onclick=e=>busy(e.currentTarget,()=>api('/api/export',{}),r=>'Guardado en Descargas: '+r.path.split('/').pop());
@@ -603,8 +613,40 @@ document.addEventListener('keydown',e=>{const typing=['INPUT','TEXTAREA','SELECT
 
 /* ---- arranque */
 window.gotoTab=gotoTab;window.openDlg=openDlg;window.load=load;window.runAll=runAll;
-load().then(()=>{const h=location.hash.slice(1);if(h==='add')openDlg();else if(['webs','hist','set'].includes(h))gotoTab(h)}).catch(e=>toast('No conecto con WebWatch: '+e.message,true));
+load().then(()=>{const h=location.hash.slice(1);if(h==='add')openDlg();else if(h==='upd'){gotoTab('set');checkUpd(true)}else if(['webs','hist','set'].includes(h))gotoTab(h);if(h!=='upd')checkUpd(false)}).catch(e=>toast('No conecto con WebWatch: '+e.message,true));
 setInterval(()=>{if(!document.hidden&&!document.querySelector('dialog[open]'))load().catch(()=>{})},15000);
+
+// ---------------------------------------------------------------- actualizaciones
+let U=null, updT=null;
+async function checkUpd(force){
+  try{U=await api('/api/update'+(force?'?force=1':''))}catch(e){if(force)toast(e.message,true);return}
+  renderUpd();
+  if(force&&!U.available&&!U.error)toast(`Ya tienes la última versión (${U.current})`);
+  if(force&&U.error)toast(U.error,true);
+}
+function renderUpd(){
+  if(!U)return;
+  const working=['downloading','verifying','restarting'].includes(U.state);
+  $('#updTitle').textContent=`WebWatch ${U.current}`+(U.available?` · nueva: ${U.latest}`:'');
+  $('#updInfo').textContent=working?U.msg+(U.state==='downloading'&&U.pct?` ${U.pct} %`:''):
+    U.state==='error'?'⚠️ '+U.msg:U.error?'⚠️ '+U.error:
+    U.available?'Hay una versión nueva lista para instalar':
+    U.checked?`Al día · comprobado ${new Date(U.checked*1000).toLocaleString('es-ES',{dateStyle:'short',timeStyle:'short'})}`:'Aún sin comprobar';
+  $('#updGo').classList.toggle('hide',!U.available);$('#updGo').disabled=working;
+  $('#updNotesRow').classList.toggle('hide',!U.available||!U.notes);
+  $('#updNotes').textContent=U.available?`Novedades de la ${U.latest}:\n\n`+U.notes:'';
+  $('#updBanner').innerHTML=U.available||working?`<div class="banner">⬆️ <span>${working?esc(U.msg)+(U.state==='downloading'&&U.pct?` ${U.pct} %`:''):`Hay una versión nueva de WebWatch: <b>${esc(U.latest)}</b> (tienes la ${esc(U.current)})`}</span>${working?'<span class="spin"></span>':'<button class="btn sm" data-upd-notes>Novedades</button><button class="btn sm p" data-upd-go>Actualizar</button>'}</div>`:'';
+  clearTimeout(updT);if(working)updT=setTimeout(()=>checkUpd(false),U.state==='restarting'?2500:800);
+}
+async function goUpd(){
+  if(!await ask(`¿Actualizar a WebWatch ${U.latest}?`,'La app se cerrará unos segundos y se abrirá sola. Tus webs, ajustes e historial se conservan.','Actualizar'))return;
+  try{await api('/api/update/install',{});U.state='downloading';U.msg='Preparando la actualización…';renderUpd()}catch(e){toast(e.message,true)}
+}
+$('#updCheck').addEventListener('click',e=>busy(e.currentTarget,()=>checkUpd(true)));
+$('#updGo').addEventListener('click',goUpd);
+$('#updBanner').addEventListener('click',e=>{if(e.target.closest('[data-upd-go]'))goUpd();if(e.target.closest('[data-upd-notes]'))gotoTab('set')});
+setInterval(()=>{if(!document.hidden)checkUpd(false)},600000);
+window.checkUpd=checkUpd;
 pollProg();
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)load().catch(()=>{})});
 </script>

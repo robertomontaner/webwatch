@@ -100,6 +100,8 @@ class AppDelegate(NSObject):
         self.qtimer = NSTimer.scheduledTimerWithTimeInterval_target_selector_userInfo_repeats_(
             2.0, self, "drainNotifications:", None, True)
         threading.Thread(target=ww.telegram_loop, daemon=True).start()  # comandos /estado, /revisar…
+        threading.Thread(target=ww.update_loop, daemon=True).start()  # ¿hay versión nueva en GitHub?
+        ww.ON_QUIT = lambda: self.performSelectorOnMainThread_withObject_waitUntilDone_("quitForUpdate:", None, False)
         if "--background" not in sys.argv:
             self.showWindow_(None)
 
@@ -217,6 +219,8 @@ class AppDelegate(NSObject):
             self.web.loadRequest_(NSURLRequest.requestWithURL_(NSURL.URLWithString_(URL + ("#" + tab if tab else ""))))
         elif tab == "add":
             self.js("window.openDlg&&openDlg()")
+        elif tab == "upd":
+            self.js("window.gotoTab&&gotoTab('set');window.checkUpd&&checkUpd(true)")
         elif tab:
             self.js(f"window.gotoTab&&gotoTab('{tab}')")
         self.win.makeKeyAndOrderFront_(None)
@@ -257,6 +261,7 @@ class AppDelegate(NSObject):
         sep = NSMenuItem.separatorItem
         m = sub("WebWatch")
         m.addItem_(self.mi("Acerca de WebWatch", "orderFrontStandardAboutPanel:", target=A))
+        m.addItem_(self.mi("Buscar actualizaciones…", "checkUpdates:"))
         m.addItem_(sep())
         m.addItem_(self.mi("Ajustes…", "openSettings:", ","))
         m.addItem_(sep())
@@ -316,6 +321,12 @@ class AppDelegate(NSObject):
 
     def openSettings_(self, sender):
         self.show("set")
+
+    def checkUpdates_(self, sender):
+        self.show("upd")
+
+    def quitForUpdate_(self, obj):
+        app().terminate_(None)
 
     def addWatch_(self, sender):
         self.show("add")
@@ -378,7 +389,7 @@ class AppDelegate(NSObject):
     # ------------------------------------------------------------ menú de la barra y del Dock
     def refresh_(self, timer):
         sig = []
-        for f in (ww.CONFIG_PATH, ww.STATE_PATH, ww.HISTORY_PATH, ww.UI_PATH, ww.PROGRESS_PATH):
+        for f in (ww.CONFIG_PATH, ww.STATE_PATH, ww.HISTORY_PATH, ww.UI_PATH, ww.PROGRESS_PATH, ww.UPDATE_PATH):
             try:
                 sig.append(f.stat().st_mtime_ns)
             except OSError:
@@ -422,6 +433,9 @@ class AppDelegate(NSObject):
             M.addItem_(self.mi("⏸ Revisión automática en pausa", enabled=False))
         if errors:
             M.addItem_(self.mi(f"⚠️ Con problemas: {short(', '.join(errors), 40)}", "showWindow:"))
+        upd = ww.update_status()
+        if upd["available"]:
+            M.addItem_(self.mi(f"⬆️ Actualizar a WebWatch {upd['latest']}…", "checkUpdates:"))
         M.addItem_(sep())
         M.addItem_(self.mi("Revisar ahora", "runNow:", "r", enabled=not busy))
         M.addItem_(self.mi("Abrir WebWatch", "showWindow:", "o"))
